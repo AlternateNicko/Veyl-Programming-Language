@@ -285,12 +285,71 @@ class VEY:
         }
     def build_instructions(self, source):
         instructions = []
-        for raw_line in source.split("\n"):
-            new_inst = self.split_comment(raw_line)
-            if new_inst is None:
-                continue
-            instructions.extend(new_inst)
+        lines = source.split("\n")
+        i = 0
+        in_docstring = False
+        while i < len(lines):
+            raw_line = lines[i]
+            if not in_docstring:
+                start = self._find_docstring_marker(raw_line, '<"', respect_quotes=True)
+                if start == -1:
+                    new_inst = self.split_comment(raw_line)
+                    if new_inst:
+                        instructions.extend(new_inst)
+                    i += 1
+                    continue
+                before = raw_line[:start]
+                after = raw_line[start + 2:]
+                end = self._find_docstring_marker(after, '">')
+                if before.strip():
+                    new_inst = self.split_comment(before)
+                    if new_inst:
+                        instructions.extend(new_inst)
+                if end == -1:
+                    # docstring isn't closed on this line, keep consuming lines
+                    in_docstring = True
+                    i += 1
+                else:
+                    # opened and closed on the same line - reprocess whatever follows
+                    lines[i] = after[end + 2:]
+                    continue
+            else:
+                end = self._find_docstring_marker(raw_line, '">')
+                if end == -1:
+                    # still inside the docstring, whole line is discarded
+                    i += 1
+                else:
+                    in_docstring = False
+                    lines[i] = raw_line[end + 2:]
+                    continue
         return instructions
+
+    def _find_docstring_marker(self, line, marker, respect_quotes=False):
+        """
+        Finds the index of a 2-char marker ('<"' or '">') in line, or -1.
+        respect_quotes=True skips matches that fall inside a real ' or "
+        string literal - used when scanning ordinary code for the opening
+        marker. Once inside a docstring body, matches are found literally
+        (respect_quotes=False), since that text is discarded, not parsed.
+        """
+        in_string = None
+        i = 0
+        while i < len(line):
+            ch = line[i]
+            if respect_quotes:
+                if in_string:
+                    if ch == in_string:
+                        in_string = None
+                    i += 1
+                    continue
+                elif ch in ("'", '"'):
+                    in_string = ch
+                    i += 1
+                    continue
+            if line[i:i + len(marker)] == marker:
+                return i
+            i += 1
+        return -1
     
     def split_comment(self, line):
         """
@@ -947,6 +1006,33 @@ class VEY:
         for i in globals:
             self.original_var[-1][i] = self.variables[i]
     
+    def datatype_convert(self, value, types, fromwho=""):
+        try:
+            if types == "int":
+                return int(value)
+            elif types == "str":
+                return str(value)
+            elif types == "float":
+                return float(value)
+            elif types == "array":
+                return tuple(value)
+            elif types == "vector":
+                return list(value)
+            elif types == "map":
+                return dict(value)
+            elif types == "set":
+                return set(value)
+            elif types == "void":
+                return None
+        except ValueError:
+            if types == "int":
+                self.error(105, types, value)
+                return None
+            self.error(106, types, value)
+        except TypeError:
+            self.error(107, types, value)
+        return None
+            
     def types(self, value, mode="p"):
         if mode == "p":
             return type(value)
@@ -958,11 +1044,11 @@ class VEY:
             elif isinstance(value, float):
                 return "float"
             elif isinstance(value, list):
-                return "list"
+                return "vector"
             elif isinstance(value, tuple):
-                return "tuple"
+                return "array"
             elif isinstance(value, dict):
-                return "dict"
+                return "map"
             elif isinstance(value, set):
                 return "set"
             else:
@@ -1313,6 +1399,11 @@ class VEY:
         self.func_name = name
         original_inst = self.Instructions
         for value, n in zip(argument, arg):
+            if n.startswith("<"):
+                types = n.split(">", 1)
+                n = types[1]
+                value = self.datatype_convert(value, types[0][1:].strip())
+                
             self.variables[n.strip()] = value
             self.constants[n.strip()] = [True, value]
         self.process_vars()
@@ -1470,6 +1561,7 @@ class VEY:
                 arg_type = a.split(" ", 1)
                 dtype = "<" + arg_type[0].strip() + ">"
                 func_arg[c] = dtype + arg_type[1].strip() # argument type
+                continue
             if a and any(ch in a for ch in self.forbiden_chars):
                 self.error(72, a, name)  # new error code, see below
                 return
@@ -1642,24 +1734,8 @@ class VEY:
                     v.append(value)
                     continue
                 rt = self.return_type
-                if rt == "int":
-                    value = int(value)
-                elif rt == "str":
-                    value = str(value)
-                elif rt == "float":
-                    value = float(value)
-                elif rt == "vector":
-                    value = list(value)
-                elif rt == "array":
-                    value = tuple(value)
-                elif rt == "map":
-                    value = dict(value)
-                elif rt == "set":
-                    value = set(value)
-                elif rt == "bool":
-                    value = bool(value)
-                elif rt == "void":
-                    value = None
+                if rt != "<any>":
+                    value = self.datatype_convert(value, rt)
                 v.append(value)
             self.return_val = v
             self.return_cache = v
@@ -2931,24 +3007,7 @@ class VEY:
         elif self.constants[left][0] and self.constants[left][1] != None and left in self.variables.keys():
             self.constants[left][0] = False
         if dt != "<any>":
-            if dt == "int":
-                self.variables[left] = int(self.variables[left])
-            elif dt == "str":
-                self.variables[left] = str(self.variables[left])
-            elif dt == "float":
-                self.variables[left] = float(self.variables[left])
-            elif dt == "vector":
-                self.variables[left] = list(self.variables[left])
-            elif dt == "array":
-                self.variables[left] = tuple(self.variables[left])
-            elif dt == "map":
-                self.variables[left] = dict(self.variables[left])
-            elif dt == "set":
-                self.variables[left] = set(self.variables[left])
-            elif dt == "bool":
-                self.variables[left] = bool(self.variables[left])
-            elif dt == "void":
-                self.variables[left] = None
+            self.variables[left] = self.datatype_convert(self.variables[left], dt)
             self.variable_info[left]["datatype"] = "Nonetype" if dt == "void" else dt
         if ismethod:
             self.methods(left, right) # next is methods
