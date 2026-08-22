@@ -13,6 +13,7 @@ if "VeylPL" not in system.path:
     system.path.append("VeylPL")
     from built_in_libraries import libraries
     from error import handle
+    import syntax_encloser
 
 r = None
 m = None
@@ -1464,7 +1465,11 @@ class VEY:
         arg = arg[:-1].split('(', 1)
         name = arg[0]
         func_arg = [a.strip() for a in arg[1].split(',')]
-        for a in func_arg:
+        for c, a in enumerate(func_arg):
+            if " " in a and a.startswith(tuple(self.datatypes)):
+                arg_type = a.split(" ", 1)
+                dtype = "<" + arg_type[0].strip() + ">"
+                func_arg[c] = dtype + arg_type[1].strip() # argument type
             if a and any(ch in a for ch in self.forbiden_chars):
                 self.error(72, a, name)  # new error code, see below
                 return
@@ -2394,7 +2399,7 @@ class VEY:
                         if not isinstance(result[0], str):
                             self.variables = result[0]
                         elif result[0].startswith("$<<"):
-                            self.process_library_sse(result[0])
+                            self.process_sse(result[0], types="library")
                         if len(result) > 1:
                             self.cnt = result[0]
                         else:
@@ -2885,6 +2890,7 @@ class VEY:
                         result = lib.process(instruction, self.variables, variant="ol")
                         if result == [] or result is None:
                             return
+                            
                         if len(result) >= 1:
                             self.variables = result[0]
                             return
@@ -3143,7 +3149,15 @@ class VEY:
                         self.constants[left] = [False, self.variables[name]]
                         self.variables[left] = self.variables[name]
                     elif var_func[cnt].startswith("immutable(") and var_func[cnt].endswith(")"):
+                        if not isinstance(self.variables[name], str):
+                            self.error(101, ".immutable()", "str", self.types(self.variables[name]))
+                            return None
                         self.variable_info[left]["Immutable"] = True # Special key for string literals only
+                    elif var_func[cnt].startswith("mutable(") and var_func[cnt].endswith(")"):
+                        if not isinstance(self.variables[name], str):
+                            self.error(101, ".mutable()", "str", self.types(self.variables[name]))
+                            return None
+                        self.variable_info[left]["Immutable"] = False
                     cnt += 1
                 self.process_vars()
             else:
@@ -3571,6 +3585,29 @@ class VEY:
             current += ch
             i += 1
         return base.strip(), accessors
+        
+    def process_sse(self, code, types="syntax"):
+        data = syntax_encloser.Data(self)
+        # this is a beta feature, only library has functionality for Custom Module Injections
+        if types == "syntax":
+            sse = syntax_encloser.SyntaxSSE(data, code)
+            
+        elif types == "class":
+            sse = syntax_encloser.MethodSSE(data, code)
+            
+        elif types == "value":
+            sse = syntax_encloser.ValueSSE(data, code)
+            
+        elif types == "library":
+            sse = syntax_encloser.LibrarySSE(data, code) # for now, only this one has functionality
+        
+        elif types == "deep":
+            sse = syntax_encloser.DeepSA(data, code)
+        
+        sse.parse()
+        
+        
+        
 # This comment right here is only used to copy, i uncomment the lines and copy them to place somewhere in the code later
 
 #if not self.attempt:
