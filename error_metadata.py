@@ -437,8 +437,11 @@ code = {
     107: {
         "response": "TypeError: Given value type `{arg2}` cannot be converted to `{arg1}`",
         "error": "TypeError"
-    }
-    
+    },
+    108: {
+        "response": "AttributeError: Attribute `{arg1}` not found in class object `{arg2}`",
+        "error": "AttributeError"
+    },
     
 }
 

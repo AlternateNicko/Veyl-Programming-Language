@@ -1429,7 +1429,7 @@ class VEY:
         del self.traceback[name]
         return
         
-    def run_methods(self, name, m_name, object, object_name, provided_args, infunc):
+    def run_methods(self, name, m_name, object, object_name, provided_args, infunc, obj_name=None):
         """
         almost the same code as run_function (because it is)
         but with a different responsibility... (which is just running user defined functions but cooler)
@@ -1489,6 +1489,8 @@ class VEY:
         
         code = self.prep_exec(block)
         self.exec_block(code, count)
+        if obj_name:
+            self.objects[obj_name]["variables"] = self.variables.copy()
         if self.in_func == 0:
             self.variables = self.original_var.pop()
             self.variables.update(og_var)
@@ -2037,10 +2039,14 @@ class VEY:
                 name = arg[0].strip()
                 value = self.eval(arg[1].strip(), {}, self.variables)
                 self.variables[name] = value
-                if type == "pub" and self.in_class[1]:
+                if types == "pub" and self.in_class[1]:
                     self.special[self.in_class[0]]["variables"][name] = True
+                    self.process_vars()
+                    return
                 elif types == "priv" and self.in_class[1]:
                     self.special[self.in_class[0]]["variables"][name] = False
+                    self.process_vars()
+                    return
                 elif types == "pub":
                     self.public[name] = value # stored into public
                 elif types == "priv" and name in self.public.keys():
@@ -2486,14 +2492,15 @@ class VEY:
                     struct = instruction.split(".", 1)
                     key = self.name_library[struct[0]]
                     module = self.nplibs[key]
-                    lib = module(**self.__dict__)
+                    lib = module(self)
                     if not hasattr(lib, "process"):
                         self.error(102, key)
                         return
                     try:
-                        result = lib.process(instruction, self.variables, variant="ol")
+                        result = lib.process(instruction, variant="ol")
                     except Exception as e:
                         self.error(103, key, instruction)
+                        return
                     if result == [] or result is None:
                         return
                     if len(result) > 0:
@@ -2605,11 +2612,20 @@ class VEY:
             global m, r, t, json, sys
             libs = False
             try:
-                if main.startswith('num(') and main.endswith(')'):
-                    self.handle_num_function(left, main)
+                if main in list(self.variables.keys()):
+                    if main not in self.class_callers.keys():
+                        self.variables[left] = self.variables[main]
+                        return
+                    if main in self.objects.keys() and right.startswith(main + "."):
+                        attribute = right.split(".", 1)[1].strip()
+                        if attribute not in self.objects[main]["variables"].keys():
+                            self.error(108, attribute, main)
+                            return
+                        self.variables[left] = self.objects[main]["variables"][attribute]
                     return
-                elif main in list(self.variables.keys()):
-                    self.variables[left] = self.variables[main]
+                    
+                elif main.startswith('num(') and main.endswith(')'):
+                    self.handle_num_function(left, main)
                     return
                     
                 elif main.startswith('input(') and main.endswith(')'):
@@ -2939,6 +2955,7 @@ class VEY:
                     for i in self.classes.keys():
                         if i in main:
                             name = i
+                    self.objects[left] = {"variables": {}, "instance": name, "inherits": self.classes[name]["inherits"]}
                     if "(" in main and ")" in main and "<const>" in list(self.classes[name]["methods"].keys()):
                         args = main[:-1].split("(", 1)
                         name = args[0]
@@ -2947,10 +2964,8 @@ class VEY:
                         args = args[1].split(',')
                         args = [self.convert_arg(arg.strip()) for arg in args]
                         self.classes[name]["methods"]["<const>"]["end"] = self.cnt
-                        self.run_methods(name, m_name, None, None, args, False)
+                        self.run_methods(name, m_name, None, None, args, False, obj_name=left)
                     self.class_callers[left] = name
-                    self.objects[left] = {"variables": {}, "instance": name, "inherits": self.classes[name]["inherits"]}
-                    self.objects[left]["variables"] = copy.deepcopy(self.classes[name]["variables"])
                     self.variables[left] = name
                     ogl = left
                     left = "<" + left + ">"
@@ -2982,20 +2997,20 @@ class VEY:
                     if d1.strip().isdigit() and d2.strip().isdigit():
                         self.variables[left] = self.eval(main, {}, self.variables)
                         return
-                    
-                    if any(instruction.strip().startswith(self.library_name[l] + ".") and l in self.library for l in self.nplibs.keys()):
-                        struct = instruction.split(".", 1)
+                    if any(right.strip().startswith(self.library_name[l] + ".") and l in self.library for l in self.nplibs.keys()):
+                        struct = right.split(".", 1)
                         key = self.name_library[struct[0]]
                         module = self.nplibs[key]
-                        lib = module(**self.__dict__)
-                        result = lib.process(instruction, self.variables, variant="ol")
+                        lib = module(self)
+                        result = lib.process(instruction, variant="av")
                         if result == [] or result is None:
                             return
                             
                         if len(result) >= 1:
                             self.variables = result[0]
                             return
-                    lib = libraries(self.__dict__)
+                        return
+                    lib = libraries(self)
                     result = lib.process((left, right), self.variables, t, m, r, json, sys, variant="av")
                     if result[0] is None or isinstance(result[0], dict) and result[0] == {}:
                         pass
@@ -3016,7 +3031,6 @@ class VEY:
                     self.error(7)
                     return
                 self.error(6, right)
-                print(e)
                 return None
         if not run_method and not pre_run:
             built_in_functions(left, main, right, ismethod)
@@ -3480,17 +3494,24 @@ class VEY:
             if block[self.cnt].endswith("{") and block[self.cnt].startswith("{"):
                 block[self.cnt] = block[self.cnt][:-1]
             # static functions, public is static, where it is defined as a class method, while private is also a class method, but you can't directly call it outside of class'
-            if block[self.cnt].startswith("public func") or block[self.cnt].startswith("private func"):
-                idks = block[self.cnt][12:].strip() if block[self.cnt].startswith("private") else block[self.cnt][11:].strip()
+            if (block[self.cnt].startswith("public") or block[self.cnt].startswith("private")) and " func " in block[self.cnt]:
+                line = block[self.cnt][8:].strip() if block[self.cnt].startswith("private") else block[self.cnt][7:].strip()
+                if not any(line.startswith(a + " ") for a in self.datatypes) and line.startswith("func "):
+                    dtype = "<any>"
+                    line = line[5:].strip()
+                else:
+                    dtype = line.split(" ", 1)
+                    line = dtype[1][5:].strip()
+                    dtype = dtype[0].strip()
                 start = self.cnt
-                if idks.endswith("{"): idks = idks[:-1].strip()
-                idks = idks.removesuffix(")")
-                arg = idks.split('(') # removes the starting parenthensis and ending
+                if line.endswith("{"): line = line[:-1].strip()
+                line = line.removesuffix(")")
+                arg = line.split('(') # removes the starting parenthensis and ending
                 func_name = arg[0]
                 func_arg = [a.strip() for a in arg[1].split(",")]
                 ogc2 = self.og_c
                 b, count, eogc2 = self.get_block()
-                self.classes[insts]["methods"][func_name] = {'block': b, 'args': func_arg, 'end': count, 'start': start, "ogc": ogc2, "end ogc": eogc2, "type": "pub" if block[self.cnt].strip().startswith("public") else "priv"}
+                self.classes[insts]["methods"][func_name] = {'block': b, 'args': func_arg, 'end': count, 'start': start, "ogc": ogc2, "end ogc": eogc2, "datatype": dtype, "type": "pub" if block[self.cnt].strip().startswith("public") else "priv"}
                 self.classes[insts]["variables"]["<attr>"].append(func_name)
                 self.special[insts]["methods"][func_name] = True
                     

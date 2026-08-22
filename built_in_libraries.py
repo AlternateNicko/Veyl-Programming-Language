@@ -28,10 +28,8 @@ class libraries:
     - debug
     """
     def __init__(self, data):
-        self.__dict__ = data
-        vey = VEY(self.line)
-        self.eval = vey.eval
-        self.special_split = vey.special_split
+        self.__dict__ = data.__dict__
+        self = data
     
     def process(self, line, vars, ti, ma, ra, jsn, syss, variant="av"):
         global t, m, r, sys, json

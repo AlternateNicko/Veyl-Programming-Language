@@ -109,7 +109,8 @@ ___
 
 • OOP support - There are multiple syntaxes used for Object Oriented Programming
 1. "class" - the main keyword to define a object
-2. `<const>` - the "construction" name, used in the class that defines a constructor, < > are special syntax enclosers, pre release for the 1.0.6 update, and will gain full functionality in 1.1.0 and above
+2. <const> - the "construction" name, used in
+    - < > are special syntax enclosers, pre release for 1.0.6 update, and will gain full functionality in 1.1.0 and above
 3. public - Accessible outside of class
 4. private - Class only access, any external access or calls are not allowed
 
@@ -253,7 +254,7 @@ output("Hello, World!") /< hello world example
 user_input = input("Type in anything: ")
 output(user_input)
 vect = [2, 6, 4, 9, 8, 1, 3, 0, 5, 7] /< Dynamic arrays
-const tup = (1, 2, 3, 4, 5) /< constant tuples
+tup = (1, 2, 3, 4, 5)
 map hash_map = {"a": 10, "b": 20, "c": 30} /< defined hash maps
 sets = {1, 2, 3, 4, 5}
 
