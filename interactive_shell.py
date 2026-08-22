@@ -1,4 +1,4 @@
-# Terminal program for N++
+# Terminal program for Veyl
 
 import sys
 sys.path.append("VeylPL")
@@ -16,8 +16,8 @@ Veyl Interactive Terminal Shell
 Version v{vey.version}
 _______________________________________________________________
 Type "help" for available commands
-Type "vey" to run epsilon intreperter shell
-Type "vey program.vey" to run an Epsilon code
+Type "vey" to run veyl intreperter shell
+Type "vey program.vey" to run an veyl code
 """
 
 
@@ -46,7 +46,7 @@ class SimpleShell:
         self.cwd = os.getcwd()
 
     def run_interpreter(self):
-        print("\nEpsilon Interactive Intrepreter")
+        print("\nVeyl Interactive Intrepreter")
         code = ""
         tab = 0
         while True:
