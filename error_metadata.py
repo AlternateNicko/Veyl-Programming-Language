@@ -425,12 +425,19 @@ code = {
     104: {
         "response": "CPIMError: Custom Module Inject `{arg1}` passed `{arg2}` back to The Veyl Library Handler that cannot be parsed",
         "error": "CPIMError"
-    }
-    105: {
-        "response": ,
-        "error": 
     },
-    
+    105: {
+        "response": "ValueError: Invalid literal for `{arg1}` with base 10: `{arg2}`",
+        "error": "ValueError"
+    },
+    106: {
+        "response": "ValueError: Could not convert {arg1} to `{arg2}`",
+        "error": "ValueError"
+    },
+    107: {
+        "response": "TypeError: Given value type `{arg2}` cannot be converted to `{arg1}`",
+        "error": "TypeError"
+    }
     
     
 }
