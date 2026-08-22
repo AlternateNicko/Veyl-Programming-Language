@@ -1,23 +1,23 @@
 # Terminal program for N++
 
 import sys
-sys.path.append("EpsilonPL")
+sys.path.append("VeylPL")
 
-from epsilon import EPS
-from edebug import debug
+from veyl import VEY
+from vdebug import debug
 
 import os
 import glob
 
 
-eps = EPS("")
+vey = VEY("")
 text = f"""
-Epsilon Interactive Terminal Shell
-Version v{eps.version}
+Veyl Interactive Terminal Shell
+Version v{vey.version}
 _______________________________________________________________
 Type "help" for available commands
-Type "eps" to run epsilon intreperter shell
-Type "eps program.eps" to run an Epsilon code
+Type "vey" to run epsilon intreperter shell
+Type "vey program.vey" to run an Epsilon code
 """
 
 
@@ -29,7 +29,7 @@ def load_path(directory_path, file_name):
     return files[0]
     
 commands = [
-"help", "eps",
+"help", "vey",
 "cd", "ls", "dir", "mkdir",
 "npi", 
 ]
@@ -100,14 +100,14 @@ class SimpleShell:
                 directory = input("Enter the name of the directory")
                 os.makedirs(directory, exist_ok=True)
                 
-            elif command.startswith("eps"):
+            elif command.startswith("vey"):
                 arg = command[3:].strip()
                 if arg == "" or arg is None:
                     self.run_interpreter()
                 else:
                     file_name = arg
-                    if not arg.endswith((".eps", ".py", ".txt")):
-                        print(f"Cannot process {arg} as it has a different file type unrelated to .eps")
+                    if not arg.endswith((".vey", ".py", ".txt")):
+                        print(f"Cannot process {arg} as it has a different file type unrelated to .vey")
                     try:
                         file_path = load_path(path, file_name)
                         with open(file_path, "r") as file:
@@ -121,7 +121,7 @@ class SimpleShell:
                 print("""
 - help
 - exit
-- eps [.eps]
+- vey [.vey]
 - ls
 - cd [directory]
                 """)
