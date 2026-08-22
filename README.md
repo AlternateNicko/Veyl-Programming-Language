@@ -153,20 +153,21 @@ This can be either importing .vey codes
 or building your own library (in /library directory) which uses python programs or even deeper, any type of program as long as it follows these instructions
 ```python
 #add this code to /library directory
-import ...#import any libraries, modules, etc as dependencies
+import ... #import any libraries, modules, etc as dependencies
 
 class any_library_name:
     #the class constructor method must follow this arguments and code
-    def __init__(self, library, library_name, variables, Errors, attempt):
-        self.library = library
-        self.library_name = library_name
+    def __init__(self, data):
+        self.__dict__
+        self.veyl = data # data is an object pointing to the current veyl class object (self)
         ...
     # this method must also be added
     def process(self, line, variant="ol"):
-        if variant == "av": # meaning assign vatiable
-            return self.variable_assignment(line) # MUST USE RETURN IF VARIABLE ASSIGNMENT
+        # all values must be returned
+        if variant == "av": # meaning assign variable
+            return self.variable_assignment(line)
         else:
-            self.one_line_instruction(line)
+            return elf.one_line_instruction(line)
 ```
 Important notices
 - self.process() must be always defined as Veyl expects a method named process() with 2 arguments, line and variant.
@@ -175,6 +176,7 @@ Important notices
 `variable = library.method()`
 where "library" is the imported library, "method" is the method of that library (or can be anything like variable assignlents)
 and "variable" as the variable name
+- name of module cannot overwrite the names of other built in libraries
 
 ___
 # Setup
