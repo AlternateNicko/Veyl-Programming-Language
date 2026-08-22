@@ -13,7 +13,7 @@ class handle:
         self.file_extension = file_extension
         self.og_c = og_c
         self.cnt = cnt
-        with open("EpsilonPL/errormd.json", "r") as file:
+        with open("VeylPL/errormd.json", "r") as file:
             self.meta = json.load(file)
             # this is a file that contains each error codes and outputs.
     
@@ -37,8 +37,9 @@ class handle:
             elif arg2 is None and arg3 is None and "{arg1}" in self.meta[code]:
                 print(self.meta[code]["response"].format(arg1=arg1))
             elif arg3 is None and "{arg1}" in self.meta[code] and "{arg2}" in self.meta[code]:
-                print(self.meta[code]["response"].format(arg1=arg2, arg2=arg2))
+                print(self.meta[code]["response"].format(arg1=arg1, arg2=arg2))
             else:
                 print(self.meta[code]["response"].format(arg1=arg1, arg2=arg2, arg3=arg3))
             self.Errors[self.meta[code]["error"]] = True
+            print("EC", code)
         return self.Errors
