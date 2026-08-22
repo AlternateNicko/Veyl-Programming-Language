@@ -1,14 +1,15 @@
-# Epsilon libraries
+# Veyl libraries
 import os
+import time
 import sys
 from pathlib import Path
 
-from epsilon import EPS
+from veyl import VEY
 
 t, m, r, sys, json = None, None, None, None, None
 class libraries:
     """
-    This module is specialized for built in libraries and helpers for epsilon,
+    This module is specialized for built in libraries and helpers for veyl,
     The class holds a parser that parses and executes an instruction for multiple built in libraries.
     
     most libraries here mostly use pythons actual libraries, mostly built ins and doesn't requires any
@@ -26,30 +27,11 @@ class libraries:
     - smart
     - debug
     """
-    def __init__(self, library, library_name, variables, cnt, og_c, classes, functions, in_class, current_func, Errors, attempt, Instructions, path, file_name, file_extension, **kwargs):
-        self.libraries = ["math", "files", "random", "sys", "time", "smart", "os", "debug"]
-        self.library_name = library_name
-        self.library = library
-        self.variables = variables
-        self.path = path
-        self.file_name = file_name
-        self.file_extension = file_extension
-        self.line = ""
-        for l in Instructions:
-            self.line += l + "\n"
-        eps = EPS(self.line)
-        self.eps = eps
-        self.cnt = cnt
-        self.eval = eps.eval
-        self.special_split = eps.special_split
-        self.classes = classes
-        self.attempt = attempt
-        self.functions = functions
-        self.in_class = in_class
-        self.current_functions = current_func
-        self.counter = 0
-        self.og_c = og_c
-        self.Errors = Errors
+    def __init__(self, data):
+        self.__dict__ = data
+        vey = VEY(self.line)
+        self.eval = vey.eval
+        self.special_split = vey.special_split
     
     def process(self, line, vars, ti, ma, ra, jsn, syss, variant="av"):
         global t, m, r, sys, json
@@ -522,7 +504,7 @@ class libraries:
                         limit = self.eval(args[5].strip(), {}, self.variables, from_lib=True)
                     if length >= 7:
                         ranges = self.eval(args[6].strip(), {}, self.variables, from_lib=True)
-                    self.variables[left] = self.eps.special_split(string, split_ch, in_char1, in_char2, ret_cap_gr, limit, ranges)
+                    self.variables[left] = self.vey.special_split(string, split_ch, in_char1, in_char2, ret_cap_gr, limit, ranges)
             
                 elif man.startswith("sm_strip(") and man.endswith(")"):
                     args = man[9:-1].strip()
@@ -687,9 +669,9 @@ class libraries:
         """
         smart.find() - checks if target exists inside line/list/tuple/set,
         respecting inner_group/outer_group nesting, scoped to a range window.
-        Reuses self.eps.special_find() directly since it now supports range.
+        Reuses self.vey.special_find() directly since it now supports range.
         """
-        return self.eps.special_find(line, target, inner_group, outer_group, range=range)
+        return self.vey.special_find(line, target, inner_group, outer_group, range=range)
     
     
     def find_index(self, list_value, target, limit=-1, range=[0, -1]):
@@ -963,10 +945,10 @@ class libraries:
             if not new_path.is_dir():
                 self._os_error("FileNotFoundError", f"Directory `{target}` does not exist")
             else:
-                # reserved-key convention: epsilon.py consumes and deletes this
+                # reserved-key convention: veyl.py consumes and deletes this
                 # after each library call to propagate self.path back to the
-                # live EPS instance (see execute_functions / assign_variable)
-                self.variables["<<new_path>>"] = str(new_path.resolve())
+                # live VEY instance (see execute_functions / assign_variable)
+                self.variables["$<<new_path>>"] = str(new_path.resolve())
             return None
     
         elif man.startswith("delete(") and man.endswith(")"):
@@ -1021,11 +1003,11 @@ class libraries:
     
     def get_injections(self):
         """
-        Metadata describing methods this library wants epsilon.py's execution
+        Metadata describing methods this library wants veyl.py's execution
         loop to invoke directly, outside the normal instruction-dispatch path.
         Keyed by name; each entry holds the bound method and the names of any
         extra arguments it needs beyond what __init__ already captured via
-        **self.__dict__ (which covers most live EPS state already).
+        **self.__dict__ (which covers most live VEY state already).
         """
         return {
             "clear_debug_screen": {
