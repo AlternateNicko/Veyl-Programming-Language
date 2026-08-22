@@ -294,6 +294,145 @@ code = {
         "response": "AccessError: Method `{arg1}` in class `{arg2}` is private and cannot be called from outside the class",
         "error": "AccessError"
     },
+    72: {
+        "response": "SyntaxError: Function `{arg1}` has an invalid parameter name `{arg2}`",
+        "error": "SyntaxError"
+    },
+    73: {
+        "response": "FileNotFoundError: File `{arg1}` does not exist",
+        "error": "FileNotFoundError"
+    },
+    74: {
+        "response": "SyntaxError: Given index cannot be empty",
+        "error": "SyntaxError"
+    },
+    75: {
+        "response": "KeyError: Key `{arg1}` is not in dictionary map `{arg2}`",
+        "error": "KeyError"
+    },
+    76: {
+        "response": "IndexError: Slice index `{arg1}` is out of range",
+        "error": "IndexError"
+    },
+    77: {
+        "response": "TypeError: Slice index type must be intergers",
+        "error": "TypeError"
+    },
+    78: {
+        "response": "RecursionError",
+        "error": "RecursionError"
+    },
+    79: {
+        "response": "AccessError: Attribute `{arg1}` is private",
+        "error": "AccessError"
+    },
+    80: {
+        "response": "AccessError: Attribute `{arg1}` is protected",
+        "error": "AccessError"
+    },
+    81: {
+        "response": "TypeError: Can not inherit from a non-class object `{arg1}`",
+        "error": "TypeError"
+    },
+    82: {
+        "response": "CircularError: Module `{arg1}` and `{arg2}` involves indefinite circular omports with each other",
+        "error": "CircularError"
+    },
+    83: {
+        "response": "CircularError: Indefinite circular inheritance detected between class `{arg1}` and `{arg2}`",
+        "error": "CircularError"
+    },
+    84: {
+        "response": "NameError: Parent class `{arg1}` does not have the defined method `{arg2}`",
+        "error": "NameError"
+    },
+    85: {
+        "response": "SyntaxError: Invalid for loop syntax",
+        "error": "SyntaxError"
+    },
+    86: {
+        "response": "SyntaxError: Invalid while loop condition syntax",
+        "error": "SyntaxError"
+    },
+    87: {
+        "response": "TypeError: for-loops requires a iterable value, but got `{arg1}`",
+        "error": "TypeError"
+    },
+    88: {
+        "response": "ValueError: Conditions must return a boolean, but got `{arg1}`",
+        "error": "ValueError"
+    },
+    89: {
+        "response": "SyntaxError: Keyword `return` cannot be used outside a function",
+        "error": "SyntaxError"
+    },
+    90: {
+        "response": "TypeError: Return value `{arg1}` cannot be converted into return-type `{arg2}`",
+        "error": "TypeError"
+    },
+    91: {
+        "response": "SyntaxError: Invalid return expression",
+        "error": "SyntaxError"
+    },
+    92: {
+        "response": "NameError: Assignments and variable declaration requires a variable name",
+        "error": "NameError"
+    },
+    93: {
+        "response": "AccessError: Cannot modify constant variable `{arg1}`",
+        "error": "AccessError"
+    },
+    94: {
+        "response": "ValueError: Given parameter length is insuffucient for function `{arg1}`",
+        "error": "ValueError"
+    },
+    95: {
+        "response": "ValueError: Given parameter length is excessive for functuon `{arg}`",
+        "error": "ValueError"
+    },
+    96: {
+        "response": "TypeError: split() expects a string literal argument type, but got `{arg1}`",
+        "error": "TypeError"
+    },
+    97: {
+        "response": "TypeError: replace() expects a string literal type arguments",
+        "error": "TypeError"
+    },
+    98: {
+        "response": "TypeError: Cannot modify unmutable strings `{arg1}`",
+        "error": "TypeError"
+    },
+    99: {
+        "response": "ValueError: Expected `type` value for instances 2nd argument, but got `{arg1}`",
+        "error": "ValueError"
+    },
+    100: {
+        "response": "FileExistsError: Cannot create file `{arg1}`, as file name is already in used",
+        "error": "FileExistsError"
+    },
+    101: {
+        "response": "TypeError: Function `{arg1}` expects a `{arg2}` argument type, but got `{arg3}`",
+        "error": "TypeError"
+    },
+    102: {
+        "response": "CPIMError: Custom Module Inject `{arg1}` must have a method named `process` for both the module and the interpreter to communicate and pass through each others instructions and data",
+        "error": "CPIMError"
+    },
+    103: {
+        "response": "CPIMError: This is not likely an Error by the program, but more likely a bug within the module `{arg1}` trying to handle code line `{arg2}`",
+        "error": "CPIMError"
+    },
+    104: {
+        "response": "CPIMError: Custom Module Inject `{arg1}` passed `{arg2}` back to The Veyl Library Handler that cannot be parsed",
+        "error": "CPIMError"
+    }
+    105: {
+        "response": ,
+        "error": 
+    },
+    
+    
+    
 }
 
 with open("errormd.json", "w") as file:
