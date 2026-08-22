@@ -353,7 +353,7 @@ class NotebookIDE:
             "selection_fg": "#ffffff",
         }
 
-        self.state_path = Path.home() / ".eps_ide_state.json"
+        self.state_path = Path.home() / ".vey_ide_state.json"
         self.recent_files = []
         self.project_folders = []
         self.load_state()
@@ -510,7 +510,7 @@ class NotebookIDE:
                 ("JSON files", "*.json"),
                 ("Markdown", "*.md"),
                 ("All files", "*.*"),
-                ("Eps files", "*.eps"),
+                ("Vey files", "*.vey"),
             ],
         )
         if path:
@@ -548,7 +548,7 @@ class NotebookIDE:
                 ("JSON Files", "*.json"),
                 ("Markdown", "*.md"),
                 ("All Files", "*.*"),
-                ("Eps Files", "*.eps"),
+                ("Vey Files", "*.vey"),
             ],
         )
         if not path:
@@ -584,7 +584,7 @@ class NotebookIDE:
                 ("JSON files", "*.json"),
                 ("Markdown", "*.md"),
                 ("All files", "*.*"),
-                ("Eps files", "*.eps"),
+                ("Vey files", "*.vey"),
             ],
         )
         if not path:
