@@ -244,7 +244,7 @@ class VEY:
         
         # METADATA'S
         self.functions = {} # where all the functions get stored, their entire code blocks, starting line, ending line, local variables, and arguments
-        self.class_callers = {} # kind of like when a variable stores the class's name, pretty muc like this
+        self.class_callers = {} # variable to object access
         self.global_var = {} # Every variables
         self.library_name = {} # where renamed library or current library names are stored
         self.name_library = {} # Vice versa
@@ -2216,6 +2216,13 @@ class VEY:
                     functions = {}
                     func_scope = {}
                     classes = {}
+                    
+                    private_c = {}
+                    public = {}
+                    class_callers = {}
+                    variable_info = {}
+                    objects = {}
+                    constant = {}
                     name = name.removesuffix(".vey")
                     # get variables, functions, classes, and libraries
                     if has_get and get_val is not None:
@@ -2228,6 +2235,11 @@ class VEY:
                                 functions[get_val] = vey.functions[get_val]
                             if get_val in vey.classes.keys():
                                 classes[get_val] = vey.classes[get_val]
+                            if get_val in vey.objects.keys():
+                                objects[get_val] = vey.objects[get_val]
+                                class_callers[get_val] = vey.class_callers[get_val]
+                                variables[get_val] = vey.variables[get_val]
+                                variables["<" + get_val + ">"]
                     else:
                         for v in vey.variables.keys():
                             variables[name + "." + v] = vey.variables[v]
@@ -2237,6 +2249,19 @@ class VEY:
                             func_scope[name + "." + f] = vey.func_scope[f]
                         for c in vey.classes.keys():
                             classes[name + "." + c] = vey.classes[c]
+                        for pc in vey.private_classes.keys():
+                            private_c[name + "." + pc] = vey.classes[pc]
+                        for p in vey.public.keys():
+                            public[name + "." + p] = vey.public[p]
+                        for cc in vey.class_callers.keys():
+                            class_callers[name + "." + cc] = vey.class_callers[cc]
+                        for vi in vey.variable_info.keys():
+                            variable_info[name + "." + vi] = vey.variable_info[vi]
+                        for obj in vey.objects.keys():
+                            objects[name + "." + obj] = vey.objects[obj]
+                        for con in vey.constants.keys():
+                            constants[name + "." + con] = vey.constants[con]
+                        
                     if vey.libraries:
                         self.library.extend(vey.library)
                         self.library_name.update(vey.library_name)
@@ -2928,7 +2953,7 @@ class VEY:
                     self.objects[left]["variables"] = copy.deepcopy(self.classes[name]["variables"])
                     self.variables[left] = name
                     ogl = left
-                    left = "__" + left + "__"
+                    left = "<" + left + ">"
                     self.variables[left] = ogl
                     return
                 # handles list, tuples, dictionaries
@@ -3551,7 +3576,7 @@ class VEY:
                 del self.objects[base]
             if base in self.variables:
                 del self.variables[base]
-            internal = "__" + base + "__"
+            internal = "<" + base + ">"
             if internal in self.variables:
                 del self.variables[internal]
             if base in self.constants:
