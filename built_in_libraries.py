@@ -29,7 +29,9 @@ class libraries:
     """
     def __init__(self, data):
         self.__dict__ = data.__dict__
-        self = data
+        self.eval = data.eval
+        self.special_split = data.special_split
+        self.special_find = data.special_find
     
     def process(self, line, vars, ti, ma, ra, jsn, syss, variant="av"):
         global t, m, r, sys, json
@@ -606,7 +608,7 @@ class libraries:
             
                 return tuple([self.variables])
             if "sys" in self.library and right.startswith(self.library_name["sys"] + "."):
-                man = self.special_split(right, ".", ("'", '"'), ("'", '"'))[1]
+                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1]
                 if man.startswith("cnt"):
                     self.variables[left] = self.cnt
                 elif man.startswith("variables"):
@@ -622,7 +624,7 @@ class libraries:
                     if args.startswith("recursionlimit"):
                         self.variables[left] = sys.getrecursionlimit()
                     elif args.startswith("sizeof(") and args.endswith(")"):
-                        arg = self.eval(args[7:-1].strip(), {}, self.variables())
+                        arg = self.eval(args[7:-1].strip(), {}, self.variables)
                         self.variables[left] = sys.getsizeof(arg)
                     elif args.startswith("maxsize"):
                         self.variables[left] = sys.maxsize
@@ -636,7 +638,7 @@ class libraries:
                     self.variables[left] = self.classes
                 return tuple([self.variables])
             if "files" in self.library and right.startswith(self.library_name["files"] + "."):
-                man = self.special_split(right, ".", ("'", '"'), ("'", '"'))[1]
+                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1]
                 if man.startswith("load(") and man.endswith(")"):
                     args = man[5:-1].strip()
                     value = self.eval(args, {}, self.variables, from_lib=True)
@@ -651,8 +653,12 @@ class libraries:
                     self.variables[left] = json.loads(value)      
                 return tuple([self.variables])
             if "os" in self.library and right.startswith(self.library_name["os"] + "."):
-                man = self.special_split(right, ".", ("'", '"'), ("'", '"'))[1]
+                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1]
                 self.variables[left] = self._os_dispatch(man)
+                return tuple([self.variables])
+            if "string" in self.library and right.startswith(self.library_name["string"] + "."):
+                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1]
+                self.variables[left] = self.string_dispatch(man.strip())
                 return tuple([self.variables])
     
     # class methods for other library functions
@@ -662,7 +668,9 @@ class libraries:
         name = given[0].strip()
         value = given[1].strip()
         return self.eval(value, {}, self.variables, from_lib=True)
-        
+    
+    def string_dispatch(self, inst):
+        pass
     def find(self, line, target, inner_group, outer_group, range=[0, -1]):
         """
         smart.find() - checks if target exists inside line/list/tuple/set,
@@ -1044,7 +1052,7 @@ class libraries:
         print("\n=== DEBUG ===")
         print(f"Instruction : {instruction}")
         print(f"Count       : {self.cnt}  (og_c: {self.og_c})")
-        print(f"Func scope  : {self.current_functions if self.in_func else '<module>'}")
+        print(f"Func scope  : {self.current_func if self.in_func else '<module>'}")
         print(f"Class scope : {self.in_class[0] if self.in_class[1] else None}")
         itype = self._debug_instruction_type(instruction)
         print(f"Instr type  : {itype}")
@@ -1057,7 +1065,7 @@ class libraries:
         print("\n=== ADV DEBUG ===")
         print(f"Instruction : {instruction}")
         print(f"Count       : {self.cnt}  (og_c: {self.og_c})")
-        print(f"Func scope  : {self.current_functions if self.in_func else '<module>'}")
+        print(f"Func scope  : {self.current_func if self.in_func else '<module>'}")
         print(f"Class scope : {self.in_class[0] if self.in_class[1] else None}")
         itype = self._debug_instruction_type(instruction)
         print(f"Instr type  : {itype}")

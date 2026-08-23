@@ -1,5 +1,5 @@
 import re # for spliting characters or strings without striping it completly
-import ast
+import ast, _io
 import operator
 from typing import Any, Dict, Union, List, Tuple, Set
 import os
@@ -169,7 +169,7 @@ class SafeEval(ast.NodeVisitor):
             raise ValueError(f"Unsupported operation: {ast.dump(node)} line {line}")
 
 class VEY:
-    def __init__(self, instructions, special_library={}, path=None, file="vey", extension=".vey"):
+    def __init__(self, instructions, special_library={}, path=None, file="module", extension=".vey"):
         # nplibs holds dictionaries like this
         # "lib_name": module_class,
         # where module_class is the class object of that library
@@ -184,7 +184,7 @@ class VEY:
         
         # LIBRARIES
         self.nplibs = special_library
-        self.libraries = ["math", "time", "random", "smart", "sys", "files", "os", "debug"] # libraries, these are built ins
+        self.libraries = ["math", "time", "random", "smart", "sys", "files", "os", "debug", "string", "numtools"] # libraries, these are built ins
         self.libraries.extend(list(special_library.keys()))
         self.library = [] # library names will be appended here once they are imported
         self.nplibs_acc = {key: False for key in self.nplibs.keys()}
@@ -284,6 +284,17 @@ class VEY:
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program'
         }
     def build_instructions(self, source):
+        """
+        Builds self.Instructions with a strict 1-entry-per-source-line
+        invariant (self.cnt / self.og_c / get_block() / traceback line
+        numbers all depend on this). Blank lines, full-line comments, and
+        lines fully swallowed by a multi-line docstring still get an entry -
+        an empty-string placeholder - so nothing collapses. Inline
+        docstrings that open AND close within one physical line are spliced
+        out before the line is otherwise processed, so a line like
+        `output(x) <"note"> throw Y("")` still yields exactly one
+        instruction instead of fragmenting into two.
+        """
         instructions = []
         lines = source.split("\n")
         i = 0
@@ -291,38 +302,56 @@ class VEY:
         while i < len(lines):
             raw_line = lines[i]
             if not in_docstring:
-                start = self._find_docstring_marker(raw_line, '<"', respect_quotes=True)
-                if start == -1:
-                    new_inst = self.split_comment(raw_line)
-                    if new_inst:
-                        instructions.extend(new_inst)
-                    i += 1
-                    continue
-                before = raw_line[:start]
-                after = raw_line[start + 2:]
-                end = self._find_docstring_marker(after, '">')
-                if before.strip():
-                    new_inst = self.split_comment(before)
-                    if new_inst:
-                        instructions.extend(new_inst)
-                if end == -1:
-                    # docstring isn't closed on this line, keep consuming lines
+                line, still_open = self._strip_inline_docstrings(raw_line)
+                if still_open:
                     in_docstring = True
-                    i += 1
+                new_inst = self.split_comment(line)
+                if new_inst:
+                    instructions.extend(new_inst)
                 else:
-                    # opened and closed on the same line - reprocess whatever follows
-                    lines[i] = after[end + 2:]
-                    continue
+                    instructions.append("")
+                i += 1
+                continue
             else:
                 end = self._find_docstring_marker(raw_line, '">')
                 if end == -1:
-                    # still inside the docstring, whole line is discarded
+                    # still inside the docstring, whole line is discarded,
+                    # but it still needs a placeholder entry
+                    instructions.append("")
                     i += 1
                 else:
                     in_docstring = False
                     lines[i] = raw_line[end + 2:]
                     continue
         return instructions
+
+    def _strip_inline_docstrings(self, line):
+        """
+        Removes every docstring span (<" ... ">) that both opens and closes
+        within this single physical line, splicing the surrounding code
+        together - so an inline doc annotation never fragments one source
+        line into multiple Instructions entries. Supports multiple such
+        spans on the same line.
+        If a docstring opens on this line without closing, everything from
+        that opening marker onward is dropped (matching the existing
+        multi-line docstring behavior) and (code_so_far, True) is returned
+        so the caller switches into multi-line docstring consumption mode.
+        """
+        result = ""
+        remainder = line
+        while True:
+            start = self._find_docstring_marker(remainder, '<"', respect_quotes=True)
+            if start == -1:
+                result += remainder
+                return result, False
+            before = remainder[:start]
+            after = remainder[start + 2:]
+            end = self._find_docstring_marker(after, '">')
+            if end == -1:
+                result += before
+                return result, True
+            result += before
+            remainder = after[end + 2:]
 
     def _find_docstring_marker(self, line, marker, respect_quotes=False):
         """
@@ -554,7 +583,15 @@ class VEY:
             try:
                 code = compile(value, "<veyl_expr>", "eval")
             except Exception:
-                self.error(36)
+                # was self.error(36) - error 36 is "forbidden character in a
+                # name/value" (the `open` keyword's error), unrelated to a
+                # failed expression compile. Falling through afterward also
+                # cached a None code object and then crashed on eval(None, ...)
+                # with a raw, uncaught Python TypeError. error 51 is the
+                # correct fit ("Cannot evaluate expression `{arg1}`"), and
+                # returning here stops both the cache-poisoning and the crash.
+                self.error(51, value)
+                return None
             expr_dict["compiled"] = code
         return eval(code, globals, locals)
         
@@ -686,9 +723,11 @@ class VEY:
             # Check for error
             if True in self.Errors.values() and not self.attempt:
                 return
+                
             if self.cnt >= len(self.Instructions):
                 break # ends the program once the cnt reaches over the programs amount of line of code
             instruction = self.Instructions[self.cnt].strip()
+            self.update_traceback()
             self.traceback["<module>"] = self.cnt
             if self.debug or self.adv_debug:
                 self.run_injected_method("clear_debug_screen")
@@ -720,8 +759,9 @@ class VEY:
             if True in self.Errors.values() and not self.attempt:
                 return
             instruction = self.Instructions[self.cnt].strip()
+            self.update_traceback()
             if self.debug or self.adv_debug:
-                print("\033c", end="")
+                self.run_injected_method("clear_debug_screen")
             if (instruction is None
                 or instruction == "pass"
                 or instruction == "{"
@@ -735,7 +775,7 @@ class VEY:
             if self.debug or self.adv_debug:
                 print("_" *27)
                 print("\n" * 5)
-                self.render_debug_interface(instruction)
+                self.run_injected_method("render_debug_interface", instruction=instruction)
             self.cnt += 1
             self.og_c += 1
             if self.breaking or self.continuing:
@@ -770,6 +810,7 @@ class VEY:
                 ogc += 1
             else:
                 nested = 0
+                ogc += 1
             block = [] # to be returned
             while cnt < len(self.Instructions):
                 line = self.Instructions[cnt].strip()
@@ -1381,7 +1422,7 @@ class VEY:
             self.error(12, name, len(argument))
         if '' in arg:
             del arg[0]
-        self.traceback[name] = self.og_c
+        self.traceback[name] = [self.og_c, self.Instructions[self.cnt]]
         self.original_var.append(self.variables.copy())
         self.variables = {}
         
@@ -1579,7 +1620,11 @@ class VEY:
             self.func_scope[self.func_name]['functions'][name]['datatype'] = dt
         self.cnt = count - 1
         self.og_c = eogc
-            
+    
+    def update_traceback(self):
+        name = list(self.traceback.keys())[-1]
+        self.traceback[name] = [self.og_c, self.Instructions[self.cnt]]
+        
     def execute_functions(self, instruction):
         """where lines are processed through
         but further down the code, the lines breaks up into smaller and smaller peices
@@ -1637,7 +1682,7 @@ class VEY:
             p_info = copy.deepcopy(self.classes[p_class])
             if method in p_info["methods"].keys():
                 args = [self.convert_arg(arg.strip()) for arg in argument]
-                self.classes[p_class]["methods"]["<const>"]["end"] = self.cnt + 1
+                self.classes[p_class]["methods"][syntax_encloser.MethodSSE.name_for("constructor")]["end"] = self.cnt + 1
                 c_name = self.in_class[0]
                 self.run_methods(p_class, method, False, p_class, argument, False)
                 # gets variables
@@ -1913,8 +1958,6 @@ class VEY:
                 iterable = list(iterable)
             if not isinstance(iterable, (list, tuple, dict, set, range, frozenset, str)):
                 self.error(87, self.types(iterable, "c"))
-                self.cnt = count - 1
-                self.og_c = eogc - 1
                 return None
             ogc = self.og_c
             block, count, eogc = self.get_block()
@@ -2245,18 +2288,18 @@ class VEY:
                                 objects[get_val] = vey.objects[get_val]
                                 class_callers[get_val] = vey.class_callers[get_val]
                                 variables[get_val] = vey.variables[get_val]
-                                variables["<" + get_val + ">"]
+                                variables["<" + get_val + ">"] = vey.variables["<" + get_val + ">"]
                     else:
                         for v in vey.variables.keys():
                             variables[name + "." + v] = vey.variables[v]
                         for f in vey.functions.keys():
                             functions[name + "." + f] = vey.functions[f]
                         for fs in vey.func_scope.keys():
-                            func_scope[name + "." + f] = vey.func_scope[f]
+                            func_scope[name + "." + fs] = vey.func_scope[fs]
                         for c in vey.classes.keys():
                             classes[name + "." + c] = vey.classes[c]
                         for pc in vey.private_classes.keys():
-                            private_c[name + "." + pc] = vey.classes[pc]
+                            private_c[name + "." + pc] = vey.private_classes[pc]
                         for p in vey.public.keys():
                             public[name + "." + p] = vey.public[p]
                         for cc in vey.class_callers.keys():
@@ -2266,7 +2309,7 @@ class VEY:
                         for obj in vey.objects.keys():
                             objects[name + "." + obj] = vey.objects[obj]
                         for con in vey.constants.keys():
-                            constants[name + "." + con] = vey.constants[con]
+                            constant[name + "." + con] = vey.constants[con]
                         
                     if vey.libraries:
                         self.library.extend(vey.library)
@@ -2280,6 +2323,12 @@ class VEY:
                     self.classes.update(classes)
                     self.func_scope.update(func_scope)
                     self.library.append(name)
+                    self.constants.update(constant)
+                    self.objects.update(objects)
+                    self.variable_info.update(variable_info)
+                    self.class_callers.update(class_callers)
+                    self.public.update(class_callers)
+                    self.private_classes.update(private_classes)
                     self.process_vars()
                 else:
                     self.error(29, lib)
@@ -2515,7 +2564,7 @@ class VEY:
                     if len(result) > 1 and result[0] != "$<<DEBUGGED>>" and result[0] != "$<<ADV_DEBUGGED>>":
                         self.cnt = result[1]
                     return
-                lib = libraries(self.__dict__)
+                lib = libraries(self)
                 result = lib.process(instruction, self.variables, t, m, r, json, sys, variant="ol")
                 if result == [] or result is None:
                     return
@@ -2611,7 +2660,7 @@ class VEY:
         def built_in_functions(left, main, right, method):
             global m, r, t, json, sys
             libs = False
-            try:
+            if True:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -2633,6 +2682,8 @@ class VEY:
                     content = str(output[1][:-1])
                     if content.startswith('"') and content.endswith('"') or content.endswith("'") and content.startswith("'"):
                         out = content[1:-1]
+                    elif content == "":
+                        out = ""
                     else:
                         try:
                             out = str(self.eval(content, {}, self.variables))
@@ -2647,9 +2698,8 @@ class VEY:
                     try:
                         value = self.eval(arg.strip(), {}, self.variables)
                     except Exception as e:
-                        
                         return None
-                    if value:
+                    if value or value in [[], (), {}]:
                         self.variables[left] = len(value)
                     return
                 elif main.startswith('range(') and main.endswith(')'):
@@ -2941,7 +2991,6 @@ class VEY:
                     else:
                         self.variables[left] = isinstance(value, datatype)
                     return
-                        
                     
                 elif main in self.functions.keys():
                     arg = self.functions[main.strip()]
@@ -2956,14 +3005,15 @@ class VEY:
                         if i in main:
                             name = i
                     self.objects[left] = {"variables": {}, "instance": name, "inherits": self.classes[name]["inherits"]}
-                    if "(" in main and ")" in main and "<const>" in list(self.classes[name]["methods"].keys()):
+                    const_name = syntax_encloser.MethodSSE.name_for("constructor")
+                    if "(" in main and ")" in main and const_name in list(self.classes[name]["methods"].keys()):
                         args = main[:-1].split("(", 1)
                         name = args[0]
                         
-                        m_name = "<const>"
+                        m_name = const_name
                         args = args[1].split(',')
                         args = [self.convert_arg(arg.strip()) for arg in args]
-                        self.classes[name]["methods"]["<const>"]["end"] = self.cnt
+                        self.classes[name]["methods"][const_name]["end"] = self.cnt
                         self.run_methods(name, m_name, None, None, args, False, obj_name=left)
                     self.class_callers[left] = name
                     self.variables[left] = name
@@ -3022,16 +3072,17 @@ class VEY:
                     3rd Layer of parsing, which is evaluation, all assignments are
                     """
                     self.variables[left] = self.eval(main, {}, self.variables)
-            except Exception as e:
-                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-                if isinstance(e, ZeroDivisionError):
-                    self.error(4)
-                    return None
-                if isinstance(e, MemoryError):
-                    self.error(7)
-                    return
-                self.error(6, right)
-                return None
+#            except Exception as e:
+#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+#                if isinstance(e, ZeroDivisionError):
+#                    self.error(4)
+#                    return None
+#                if isinstance(e, MemoryError):
+#                    self.error(7)
+#                    return
+#                self.error(6, right)
+#                print(e)
+#                return None
         if not run_method and not pre_run:
             built_in_functions(left, main, right, ismethod)
         else:
@@ -3309,6 +3360,15 @@ class VEY:
         content = instruction[7:-1].strip() if instruction.startswith("output(") else instruction # Extract content within output(...)
         if not content:
             return ""
+        if self.special_find(content, ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}")):
+            args = self.special_split(content, ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
+            output = ""
+            for v in args:
+                value = self.handle_output(v.strip())
+                if value is None:
+                    continue
+                output += str(value)
+            return output
         # Handle output of string literals, variables, and expressions    
         if content.startswith('call '):
             arg = content[5:-1].split('(', 1)
@@ -3353,7 +3413,7 @@ class VEY:
                 self.run_methods(name, m_name, True, object_name, args, t)
                 if self.is_return:
                     for val in self.return_val:
-                        v += val + " "
+                        v += str(val) + " "
                     self.is_return = False
             elif name in list(self.functions.keys()):
                 a = self.special_split(arg[1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
@@ -3365,7 +3425,7 @@ class VEY:
                 if self.is_return:
                     
                     for val in self.return_val:
-                        v += val + " "
+                        v += str(val) + " "
                     self.is_return = False
             elif self.in_func:
                 if self.is_priv and name in list(self.func_scope.keys()) or self.is_pub and self.func_name in list(self.func_scope.keys()):
@@ -3382,7 +3442,7 @@ class VEY:
                     self.run_functions(name, a, True)
                     if self.is_return:
                         for val in self.return_val:
-                            v += val + " "
+                            v += str(val) + " "
                         self.is_return = False
                     self.cnt = ending
                     self.og_c = end_ogc
@@ -3470,9 +3530,10 @@ class VEY:
                 if i not in self.classes.keys():
                     continue
                 parent_const.update(copy.deepcopy(self.classes[i]))
-                if "<const>" in self.classes[i]["methods"].keys():
-                    parent_const["methods"]["_" + i + "_" + "<const>"] = self.classes[i]["methods"]["<const>"].copy() # so both constructors don't get over written
-                    del parent_const["methods"]["<const>"]
+                const_name = syntax_encloser.MethodSSE.name_for("constructor")
+                if const_name in self.classes[i]["methods"].keys():
+                    parent_const["methods"]["_" + i + "_" + const_name] = self.classes[i]["methods"][const_name].copy() # so both constructors don't get over written
+                    del parent_const["methods"][const_name]
                 if i:
                     self.classes[insts]["methods"].update(parent_const["methods"])
                     self.classes[insts]["variables"].update(parent_const["variables"])
@@ -3635,7 +3696,7 @@ class VEY:
         pattern as ordinary library calls), looks up the registered method and
         its declared extra argument names, and calls it.
         """
-        lib = libraries(**self.__dict__)
+        lib = libraries(self)
         injections = lib.get_injections()
         if name not in injections:
             return None
