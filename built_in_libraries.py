@@ -1,12 +1,12 @@
 # Veyl libraries
-import os
+import os, re
 import time
 import sys
 from pathlib import Path
 
 from veyl import VEY
 
-t, m, r, sys, json = None, None, None, None, None
+t, m, r, sys, json, au = None, None, None, None, None, None
 class libraries:
     """
     This module is specialized for built in libraries and helpers for veyl,
@@ -32,14 +32,11 @@ class libraries:
         self.eval = data.eval
         self.special_split = data.special_split
         self.special_find = data.special_find
+        self.error = data.error
     
-    def process(self, line, vars, ti, ma, ra, jsn, syss, variant="av"):
-        global t, m, r, sys, json
-        t = ti
-        m = ma
-        r = ra
-        json = jsn
-        sys = syss
+    def process(self, line, vars, libs, variant="av"):
+        global t, m, r, sys, json, au
+        t, m, r, json, sys, au, = libs[0], libs[1], libs[2], libs[3], libs[4], libs[5]
         self.variables = vars
         if variant == "av":
             res = self.assign_variables(line, variant)
@@ -49,7 +46,7 @@ class libraries:
             return res
             
     def one_line(self, line, var):
-        global t, m, json, sys, r
+        global t, m, json, sys, r, au
         if var == "ol":
             instruction = line
             try:
@@ -189,7 +186,7 @@ class libraries:
                 print(e)
                 
     def assign_variables(self, line, var):
-        global t, m, r, json, sys
+        global t, m, r, json, sys, au
         """
         This function is specialized mostly for variable assignments like
         var = module.function()
@@ -653,7 +650,7 @@ class libraries:
                     self.variables[left] = json.loads(value)      
                 return tuple([self.variables])
             if "os" in self.library and right.startswith(self.library_name["os"] + "."):
-                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1]
+                man = self.special_split(right, ".", ("'", '"'), ("'", '"'), limit=1)[1].strip()
                 self.variables[left] = self._os_dispatch(man)
                 return tuple([self.variables])
             if "string" in self.library and right.startswith(self.library_name["string"] + "."):
@@ -670,7 +667,101 @@ class libraries:
         return self.eval(value, {}, self.variables, from_lib=True)
     
     def string_dispatch(self, inst):
-        pass
+        if inst.startswith("proper(") and inst.endswith(")"):
+            arg = inst[7:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+            return self._string_proper(string)
+        elif inst.startswith("random(") and inst.endswith(")"):
+            arg = inst[7:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+            return self._random_string(string)
+        
+        
+        
+        
+    
+    def _random_string(self, text: str) -> str:
+        result = ""
+        import random
+        for t in text:
+            if t.isalpha() and t.isascii:
+                result += random.choice([t.upper(), t.lower()])
+            else:
+                result += t
+        return t
+    
+    def _string_proper(self, text: str) -> str:
+        global au
+        spell = au(lang="en")
+        text = text.lower()
+        text = re.sub(r"[\n\r\t]+", " ", text)
+        text = re.sub(r"[^a-z0-9\s.,!?'\-]", "", text)
+        text = re.sub(r"\s+([.,!?])", r"\1", text)
+        while True:
+            old_text = text
+    
+            # Remove spaces between punctuation marks
+            text = re.sub(r"([.!?])\s+([.!?])", r"\1\2", text)
+    
+            # Any consecutive punctuation becomes ONE mark.
+            # If multiple different marks occur, keep the LAST one.
+            text = re.sub(
+                r"[.!?]+",
+                lambda m: m.group(0)[-1],
+                text
+            )
+    
+            if text == old_text:
+                break
+        text = re.sub(r"([.!?])([a-zA-Z0-9])", r"\1 \2", text)
+        text = re.sub(r"\s+", " ", text).strip()
+        words = text.split()
+        corrected_words = []
+    
+        for word in words:
+    
+            match = re.match(
+                r"^([^a-z0-9]*)([a-z0-9'-]+)([^a-z0-9]*)$",
+                word
+            )
+    
+            if match:
+                prefix = match.group(1)
+                core = match.group(2)
+                suffix = match.group(3)
+    
+                if re.search(r"[a-z]", core):
+                    core = spell(core)
+    
+                word = prefix + core + suffix
+    
+            corrected_words.append(word)
+    
+        text = " ".join(corrected_words)
+        
+        def add_number_commas(match):
+            number = match.group(0)
+            return f"{int(number):,}"
+    
+        text = re.sub(r"\b\d+\b", add_number_commas, text)
+        text = re.sub(
+            r"^[a-z]",
+            lambda m: m.group(0).upper(),
+            text
+        )
+        text = re.sub(
+            r"([.!?]\s+)([a-z])",
+            lambda m: m.group(1) + m.group(2).upper(),
+            text
+        )
+        text = re.sub(r"\s+", " ", text).strip()
+    
+        return text
+        
     def find(self, line, target, inner_group, outer_group, range=[0, -1]):
         """
         smart.find() - checks if target exists inside line/list/tuple/set,

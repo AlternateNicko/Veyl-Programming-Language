@@ -20,6 +20,7 @@ m = None
 t = None
 sys = None
 json = None
+au = None
 _ASSIGN_FASTPATH_EXCLUDE = (
     '/<', 'output', 'ignore', 'quit()', 'inherit ', '<debug>',
     'load', 'break', 'continue', 'while', 'return', 'global', 'if', 'else',
@@ -1640,7 +1641,7 @@ class VEY:
         
         Layer 1 of parsing
         """
-        global m, r, t, json, sys
+        global m, r, t, json, sys, au
         if isinstance(instruction, list):
             instruction = instruction[0].strip()
         else:
@@ -2214,6 +2215,9 @@ class VEY:
                     elif lib == "sys":
                         import sys as s
                         sys = s
+                    elif lib == "string":
+                        from autocorrect import Speller
+                        au = Speller
                     elif lib in self.nplibs.keys():
                         self.nplibs_acc[lib] = True # access allowed
                     else:
@@ -2565,7 +2569,7 @@ class VEY:
                         self.cnt = result[1]
                     return
                 lib = libraries(self)
-                result = lib.process(instruction, self.variables, t, m, r, json, sys, variant="ol")
+                result = lib.process(instruction, self.variables, [t, m, r, json, sys, au], variant="ol")
                 if result == [] or result is None:
                     return
                 
@@ -2658,7 +2662,7 @@ class VEY:
                 self.variables[left] = self.eval(main, {}, self.variables)
                 pre_run = True
         def built_in_functions(left, main, right, method):
-            global m, r, t, json, sys
+            global m, r, t, json, sys, au
             libs = False
             if True:
                 if main in list(self.variables.keys()):
@@ -3061,7 +3065,8 @@ class VEY:
                             return
                         return
                     lib = libraries(self)
-                    result = lib.process((left, right), self.variables, t, m, r, json, sys, variant="av")
+                    
+                    result = lib.process((left, right), self.variables, [t, m, r, json, sys, au], variant="av")
                     if result[0] is None or isinstance(result[0], dict) and result[0] == {}:
                         pass
                     else:
