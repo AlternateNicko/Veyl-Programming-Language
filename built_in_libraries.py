@@ -5,8 +5,8 @@ import sys
 from pathlib import Path
 
 from veyl import VEY
+import bil_helper.bil_string_center as str_center
 
-t, m, r, sys, json, au = None, None, None, None, None, None
 class libraries:
     """
     This module is specialized for built in libraries and helpers for veyl,
@@ -34,9 +34,7 @@ class libraries:
         self.special_find = data.special_find
         self.error = data.error
     
-    def process(self, line, vars, libs, variant="av"):
-        global t, m, r, sys, json, au
-        t, m, r, json, sys, au, = libs[0], libs[1], libs[2], libs[3], libs[4], libs[5]
+    def process(self, line, vars, variant="av"):
         self.variables = vars
         if variant == "av":
             res = self.assign_variables(line, variant)
@@ -46,7 +44,9 @@ class libraries:
             return res
             
     def one_line(self, line, var):
-        global t, m, json, sys, r, au
+        t = self.py_modules.get("time")
+        json = self.py_modules.get("json")
+        sys = self.py_modules.get("sys")
         if var == "ol":
             instruction = line
             try:
@@ -186,7 +186,10 @@ class libraries:
                 print(e)
                 
     def assign_variables(self, line, var):
-        global t, m, r, json, sys, au
+        m = self.py_modules.get("math")
+        r = self.py_modules.get("random")
+        t = self.py_modules.get("time")
+        json = self.py_modules.get("json")
         """
         This function is specialized mostly for variable assignments like
         var = module.function()
@@ -667,35 +670,272 @@ class libraries:
         return self.eval(value, {}, self.variables, from_lib=True)
     
     def string_dispatch(self, inst):
-        if inst.startswith("proper(") and inst.endswith(")"):
+        au = self.py_modules.get("au")
+        if not inst.strip().endswith(")"):
+            self.error(109, inst)
+            return None
+        if inst.startswith("proper("):
             arg = inst[7:-1].strip()
             string = self.eval(arg, {}, self.variables)
             if not isinstance(string, str):
                 self.error(1001, string)
+                return
             return self._string_proper(string)
-        elif inst.startswith("random(") and inst.endswith(")"):
+        elif inst.startswith("random("):
             arg = inst[7:-1].strip()
             string = self.eval(arg, {}, self.variables)
             if not isinstance(string, str):
                 self.error(1001, string)
-            return self._random_string(string)
-        
-        
-        
-        
-    
-    def _random_string(self, text: str) -> str:
-        result = ""
-        import random
-        for t in text:
-            if t.isalpha() and t.isascii:
-                result += random.choice([t.upper(), t.lower()])
+                return
+            result = ""
+            import random
+            for t in text:
+                if t.isalpha() and t.isascii:
+                    result += random.choice([t.upper(), t.lower()])
+                else:
+                    result += t
+            return result
+        elif inst.startswith("morse("):
+            arg = inst[6:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            MORSE = {
+                'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',
+                'E': '.',     'F': '..-.',  'G': '--.',   'H': '....',
+                'I': '..',    'J': '.---',  'K': '-.-',   'L': '.-..',
+                'M': '--',    'N': '-.',    'O': '---',   'P': '.--.',
+                'Q': '--.-',  'R': '.-.',   'S': '...',   'T': '-',
+                'U': '..-',   'V': '...-',  'W': '.--',   'X': '-..-',
+                'Y': '-.--',  'Z': '--..',
+                '0': '-----', '1': '.----', '2': '..---', '3': '...--',
+                '4': '....-', '5': '.....', '6': '-....', '7': '--...',
+                '8': '---..', '9': '----.'
+            }
+            return ' '.join(MORSE.get(char, '/') for char in string.upper())
+        elif inst.startswith("autocorrect("):
+            arg = inst[12:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            spell = au(lang="en")
+            words = text.split()
+            corrected_words = []
+            for word in words:
+                match = re.match(
+                    r"^([^a-z0-9]*)([a-z0-9'-]+)([^a-z0-9]*)$",
+                    word
+                )
+                if match:
+                    prefix = match.group(1)
+                    core = match.group(2)
+                    suffix = match.group(3)
+                    if re.search(r"[a-z]", core):
+                        core = spell(core)
+                    word = prefix + core + suffix
+                corrected_words.append(word)
+            return " ".join(corrected_words)
+        elif inst.startswith("ascii("):
+            arg = inst[6:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return [ord(char) for char in string.strip()]
+        elif inst.startswith("decode_ascii("):
+            arg = inst[13:-1].strip()
+            numbers = self.eval(arg, {}, self.variables)
+            if not isinstance(numbers, (list, tuple)):
+                self.error(1002, numbers)
+                return
+            return "".join(chr(number) for number in numbers)
+        elif inst.startswith("contains("):
+            arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            string1 = self.eval(arg[1].strip(), {}, self.variables)
+            
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            is_surround = True if len(arg) == 3 and self.eval(arg[2], {}, self.variables) else False
+            if not is_surround:
+                string1 = " " + string1 + " "
+            return string1 in string
+        elif inst.startswith("wordstrwith("):
+            arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            string1 = self.eval(arg[1].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return any(a.startswith(string1) for a in string.strip.split(" "))
+        elif inst.startswith("mask("):
+            arg = self.special_split(inst[5:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            interger = self.eval(arg[1].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            if not isinstance(interger, int):
+                self.error(1003, string)
+                return
+            new_str = ""
+            for i in range(len(string)):
+                if i < interger:
+                    new_str += "*"
+                    continue
+                new_str += string[i]
+            return new_str
+        elif inst.startswith("find_encloser("):
+            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            enc1 = self.eval(arg[1].strip(), {}, self.variables)
+            enc2 = self.eval(arg[2].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            if not isinstance(enc1, str) or not isinstance(enc2, str):
+                self.error(1004, enc1, enc2)
+                return
+            start = string.find(enc1)
+            if start == -1:
+                return ""
+            start += len(enc1)
+            end = string.find(enc2, start)
+            if end == -1:
+                return ""
+            return string[start:end]
+        elif inst.startswith("collapse_whitespaces("):
+            arg = inst[21:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return " ".join(string.split())
+        elif inst.startswith("remove_char("):
+            arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            target = self.eval(arg[1].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return "".join(string.split())
+        elif inst.startswith("romanize("):
+            arg = inst[9:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            from unidecode import unidecode
+            return unidecode(string)
+        elif inst.startswith("center("):
+            arg = self.special_split(inst[7:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=5)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            width = self.eval(arg[1].strip(), {}, self.variables)
+            fill_str = self.eval(arg[2].strip(), {}, self.variables)
+            overflow_type = self.eval(arg[3].strip(), {}, self.variables)
+            unicode_width_type = self.eval(arg[4].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return str_center.center(string, width, fill=fill_str, overflow=overflow_type, unicode_width=unicode_width_type)
+        elif inst.startswith("single_format("):
+            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            types = self.eval(arg[1].strip(), {}, self.variables)
+            arg_value = self.eval(arg[2].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            if arg_value is None:
+                format_spec = types
             else:
-                result += t
-        return t
+                format_spec = f"{types}{arg_value}"
+        
+            return f"{{:{format_spec}}}".format(string)
+        elif inst.startswith("count_words("):
+            arg = inst[12:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return len(" ".join(string.split()).split(" ")) # collapses whitespaces before splitting
+        elif inst.startswith("remove_digit("):
+            arg = inst[13:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return ''.join([char for char in string if not char.isdigit()])
+        elif inst.startswith("remove_alpha("):
+            arg = inst[13:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return ''.join([char for char in string if not char.isalpha()])
+        elif inst.startswith("keep_digit("):
+            arg = inst[11:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return ''.join([char for char in string if char.isdigit()])
+        elif inst.startswith("keep_alpha("):
+            arg = inst[11:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return ''.join([char for char in string if char.isalpha()])
+        elif inst.startswith("truncate("):
+            arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            length = self.eval(arg[1].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return string[:length]
+        elif inst.startswith("count_digits(") and inst.endswith(")"):
+            arg = inst[13:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            return len(" ".join([char for char in string if char.isdigit()]))
+        elif inst.startswith("ispalindrome("):
+            arg = inst[13:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            reverse = "".join(list(reversed(string)))
+            return True if string == reverse else False
+        elif inst.startswith("isanagram("):
+            arg = self.special_split(inst[10:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            compare = self.eval(arg[1].strip(), {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            reverse = "".join(list(reversed(string)))
+            return True if reverse == compare else False
+        elif inst.startswith("shuffle("):
+            arg = inst[8:-1].strip()
+            string = self.eval(arg, {}, self.variables)
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            import random
+            print(random.shuffle(list(string)))
+            return "".join(random.shuffle(list(string)))
+        return
+            
     
     def _string_proper(self, text: str) -> str:
-        global au
+        au = self.py_modules.get("au")
         spell = au(lang="en")
         text = text.lower()
         text = re.sub(r"[\n\r\t]+", " ", text)

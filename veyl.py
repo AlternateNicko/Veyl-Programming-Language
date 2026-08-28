@@ -15,12 +15,6 @@ if "VeylPL" not in system.path:
     from error import handle
     import syntax_encloser
 
-r = None
-m = None
-t = None
-sys = None
-json = None
-au = None
 _ASSIGN_FASTPATH_EXCLUDE = (
     '/<', 'output', 'ignore', 'quit()', 'inherit ', '<debug>',
     'load', 'break', 'continue', 'while', 'return', 'global', 'if', 'else',
@@ -176,7 +170,7 @@ class VEY:
         # where module_class is the class object of that library
         
         # CONFIGURATIONS
-        self.version = "1.0.6-pr" # current version
+        self.version = "1.0.6" # current version
         
         self.path = Path.cwd() if path is None else path # current program directory
         self.file_name = file # name of file
@@ -189,6 +183,7 @@ class VEY:
         self.libraries.extend(list(special_library.keys()))
         self.library = [] # library names will be appended here once they are imported
         self.nplibs_acc = {key: False for key in self.nplibs.keys()}
+        self.py_modules = {}
         
         # FOR LIBRARIES
         self.debug = False
@@ -282,8 +277,9 @@ class VEY:
             'FileNoFoundError': False,
             "FileExisrsError": False,
             
-            'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program'
+            'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
+        
     def build_instructions(self, source):
         """
         Builds self.Instructions with a strict 1-entry-per-source-line
@@ -1559,7 +1555,7 @@ class VEY:
     def load(self, name, addr, value):
         """
         handles list assignments in the past, but now it both handles
-        list assignments and dictionary assigmments
+        list, dictionary, and mutable-string assignments
         """
         var = self.variables[name]
         addr = self.eval(addr, {}, self.variables)
@@ -1573,6 +1569,29 @@ class VEY:
             else:
                 self.variables[name][int(addr)] = value
                 return
+        elif isinstance(var, str):
+            # strings are Immutable=True by default via .immutable(), or
+            # variable_info's default False if never explicitly set/toggled.
+            # This is independent of "constant" - a full reassignment
+            # (string = "new value") is never blocked by this flag.
+            if self.variable_info.get(name, {}).get("Immutable", False):
+                self.error(98, name)
+                return
+            try:
+                idx = int(addr)
+            except (TypeError, ValueError):
+                self.error(14, name, len(var), addr)
+                return
+            if idx < 0 or idx >= len(var):
+                self.error(14, name, len(var), idx)
+                return
+            # splices `value` in at idx, replacing exactly one character -
+            # value can be a single char or a longer string, in which case
+            # the result string grows instead of a 1:1 char swap
+            self.variables[name] = var[:idx] + str(value) + var[idx + 1:]
+            if name in self.constants and self.constants[name][0]:
+                self.constants[name][0] = False
+            return
         else:
             if not self.attempt:
                 self.error(15, name, type(value))
@@ -1641,7 +1660,6 @@ class VEY:
         
         Layer 1 of parsing
         """
-        global m, r, t, json, sys, au
         if isinstance(instruction, list):
             instruction = instruction[0].strip()
         else:
@@ -2202,22 +2220,22 @@ class VEY:
                     # import individually if the program says so, so startup doesn't take too long
                     if lib == "time":
                         import time
-                        t = time
+                        self.py_modules["time"] = time
                     elif lib == "random":
                         import random
-                        r = random
+                        self.py_modules["random"] = random
                     elif lib == "math":
                         import math
-                        m = math
+                        self.py_modules["math"] = math
                     elif lib == "files":
                         import json as j
-                        json = j
+                        self.py_modules["json"] = j
                     elif lib == "sys":
                         import sys as s
-                        sys = s
+                        self.py_modules["sys"] = s
                     elif lib == "string":
                         from autocorrect import Speller
-                        au = Speller
+                        self.py_modules["autocorrect"] = Speller
                     elif lib in self.nplibs.keys():
                         self.nplibs_acc[lib] = True # access allowed
                     else:
@@ -2569,7 +2587,7 @@ class VEY:
                         self.cnt = result[1]
                     return
                 lib = libraries(self)
-                result = lib.process(instruction, self.variables, [t, m, r, json, sys, au], variant="ol")
+                result = lib.process(instruction, self.variables, variant="ol")
                 if result == [] or result is None:
                     return
                 
@@ -2614,7 +2632,6 @@ class VEY:
         but also can be the 4th layer of parsing by self.eval()
         """
         stuff = instruction.split('=', 1)
-        libs = False
         left = stuff[0].strip()
         if not left or left == "":
             self.error(92)
@@ -2662,9 +2679,8 @@ class VEY:
                 self.variables[left] = self.eval(main, {}, self.variables)
                 pre_run = True
         def built_in_functions(left, main, right, method):
-            global m, r, t, json, sys, au
             libs = False
-            if True:
+            try:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -2927,7 +2943,7 @@ class VEY:
                     return
                 elif main.startswith("min(") and main.endswith(")"):
                     arg = main[4:-1].strip().split(",", 1)
-                    value = self.eval(arg[0], {}, self.variables)
+                    value = self.eval(arg[0].strip(), {}, self.variables)
                     if len(arg) == 2:
                         self.variables[left] = min(value, default=arg[1])
                     else:
@@ -2962,8 +2978,8 @@ class VEY:
                     if len(arg) < 2:
                         self.error(42, len(arg))
                         return None
-                    arg[0] = self.eval(arg[0], {}, self.variables)
-                    arg[1] = self.eval(arg[1], {}, self.variables)
+                    arg[0] = self.eval(arg[0].strip(), {}, self.variables)
+                    arg[1] = self.eval(arg[1].strip(), {}, self.variables)
                     if len(arg[0]) != len(arg[1]):
                         self.error(43)
                         return None
@@ -3058,38 +3074,42 @@ class VEY:
                         lib = module(self)
                         result = lib.process(instruction, variant="av")
                         if result == [] or result is None:
-                            return
+                            pass
                             
                         if len(result) >= 1:
                             self.variables = result[0]
-                            return
-                        return
-                    lib = libraries(self)
-                    
-                    result = lib.process((left, right), self.variables, [t, m, r, json, sys, au], variant="av")
-                    if result[0] is None or isinstance(result[0], dict) and result[0] == {}:
-                        pass
+                            return "<<from_library>>"
                     else:
-                        self.variables = result[0]
-                        return
+                        lib = libraries(self)
+                        
+                        result = lib.process((left, right), self.variables, variant="av")
+                        if result[0] is None or isinstance(result[0], dict) and result[0] == {}:
+                            pass
+                        else:
+                            self.variables = result[0]
+                            libs = True
+                            return "<<from_library>>"
+                        
                 if not libs:
                     """
                     3rd Layer of parsing, which is evaluation, all assignments are
                     """
                     self.variables[left] = self.eval(main, {}, self.variables)
-#            except Exception as e:
-#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-#                if isinstance(e, ZeroDivisionError):
-#                    self.error(4)
-#                    return None
-#                if isinstance(e, MemoryError):
-#                    self.error(7)
-#                    return
-#                self.error(6, right)
-#                print(e)
-#                return None
+            except Exception as e:
+                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                if isinstance(e, ZeroDivisionError):
+                    self.error(4)
+                    return None
+                if isinstance(e, MemoryError):
+                    self.error(7)
+                    return
+                self.error(6, right)
+                print(e)
+                return None
         if not run_method and not pre_run:
-            built_in_functions(left, main, right, ismethod)
+            val = built_in_functions(left, main, right, ismethod)
+            if val == "<<from_library>>":
+                ismethod = False
         else:
             if ismethod:
                 self.methods(left, right)
@@ -3123,7 +3143,7 @@ class VEY:
                 cnt = 1
                 while cnt < len(var_func):
                     if var_func[cnt].startswith('cap(') and var_func[cnt].endswith(')') :
-                        func = var_func[cnt][4:-1]
+                        func = var_func[cnt][4:-1].strip()
                         arg_er = list(func.split(',')) # list() because if no comma, it wouldnt be a list
                         if func != '':
                             self.error(54)
@@ -3133,7 +3153,7 @@ class VEY:
                             self.error(55, self.variables[left])
                             return
                     if var_func[cnt].startswith('low(') and var_func[cnt].endswith(')') :
-                        func = var_func[cnt][4:-1]
+                        func = var_func[cnt][4:-1].strip()
                         arg_er = list(func.split(','))
                         if func != '':
                             self.error(56, len(arg))
@@ -3143,7 +3163,7 @@ class VEY:
                             self.error(55, self.variables[left])
                             return
                     elif var_func[cnt].startswith('as(') and var_func[cnt].endswith(')'):
-                        args = var_func[cnt][3:-1]
+                        args = var_func[cnt][3:-1].strip()
                         if name in self.variables:
                             try:
                                 if args in self.variables:
@@ -3181,7 +3201,7 @@ class VEY:
                                 self.error(58, self.variables[name], args)
                                 return
                     elif var_func[cnt].startswith('rem(') and var_func[cnt].endswith(')'):
-                        argu = var_func[cnt][4:-1]
+                        argu = var_func[cnt][4:-1].strip()
                         if argu != "":
                             func = self.eval(argu, {}, self.variables)
                         else:
@@ -3189,7 +3209,7 @@ class VEY:
                         self.variables[left] = self.variables[name].replace(func, "")
                         return
                     elif var_func[cnt].startswith("strip(") and var_func[cnt].endswith(")"):
-                        argu = var_func[cnt][6:-1]
+                        argu = var_func[cnt][6:-1].strip()
                         if argu is None:
                             argu = " "
                         self.variables[left] = self.variables[name].strip(argu)
@@ -3231,12 +3251,12 @@ class VEY:
                         self.variables[left] = self.variables[name].replace(arg1, arg2)
                     
                     elif var_func[cnt].startswith("slice(") and var_func[cnt].endswith(")"):
-                        arg = var_func[cnt].strip()[6:-1]
+                        arg = var_func[cnt].strip()[6:-1].strip()
                         arg = self.special_split(arg, ",", ("(", "'", '"'), (")", "'", '"'))
                         if not isinstance(arg, list):
                             arg = [arg]
                         for i, v in enumerate(arg):
-                            arg[i] = self.eval(v, {}, self.variables)
+                            arg[i] = self.eval(v.strip(), {}, self.variables)
                         if len(arg) < 3:
                             if len(arg) < 2:
                                 arg.append(len(self.variables[name]))
@@ -3312,6 +3332,11 @@ class VEY:
                             self.error(101, ".mutable()", "str", self.types(self.variables[name]))
                             return None
                         self.variable_info[left]["Immutable"] = False
+                    elif var_func[cnt].startwith("swap_case(") and var_func[cnt].endswith(")"):
+                        if not isinstance(self.variables[name], str):
+                            self.error(101, ".string()", "str", self.types(self.variables[name]))
+                            return None
+                        self.variables[left] = self.variables[name].swapcase()
                     cnt += 1
                 self.process_vars()
             else:
