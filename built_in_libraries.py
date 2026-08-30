@@ -6,6 +6,7 @@ from pathlib import Path
 
 from veyl import VEY
 import bil_helper.bil_string_center as str_center
+import bil_helper.bil_string_complete as stringtk
 
 class libraries:
     """
@@ -720,8 +721,9 @@ class libraries:
             if not isinstance(string, str):
                 self.error(1001, string)
                 return
+            au = self.py_modules.get("au")
             spell = au(lang="en")
-            words = text.split()
+            words = string.split()
             corrected_words = []
             for word in words:
                 match = re.match(
@@ -753,6 +755,12 @@ class libraries:
             return "".join(chr(number) for number in numbers)
         elif inst.startswith("contains("):
             arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
+            if len(arg) > 3:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
             string = self.eval(arg[0].strip(), {}, self.variables)
             string1 = self.eval(arg[1].strip(), {}, self.variables)
             
@@ -765,6 +773,12 @@ class libraries:
             return string1 in string
         elif inst.startswith("wordstrwith("):
             arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
             string = self.eval(arg[0].strip(), {}, self.variables)
             string1 = self.eval(arg[1].strip(), {}, self.variables)
             if not isinstance(string, str):
@@ -773,6 +787,12 @@ class libraries:
             return any(a.startswith(string1) for a in string.strip.split(" "))
         elif inst.startswith("mask("):
             arg = self.special_split(inst[5:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
             string = self.eval(arg[0].strip(), {}, self.variables)
             interger = self.eval(arg[1].strip(), {}, self.variables)
             if not isinstance(string, str):
@@ -799,6 +819,12 @@ class libraries:
             if not isinstance(enc1, str) or not isinstance(enc2, str):
                 self.error(1004, enc1, enc2)
                 return
+            if len(arg) > 3:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 2:
+                self.error(94, inst.strip())
+                return
             start = string.find(enc1)
             if start == -1:
                 return ""
@@ -816,6 +842,13 @@ class libraries:
             return " ".join(string.split())
         elif inst.startswith("remove_char("):
             arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
+            
             string = self.eval(arg[0].strip(), {}, self.variables)
             target = self.eval(arg[1].strip(), {}, self.variables)
             if not isinstance(string, str):
@@ -831,7 +864,14 @@ class libraries:
             from unidecode import unidecode
             return unidecode(string)
         elif inst.startswith("center("):
-            arg = self.special_split(inst[7:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=5)
+            arg = self.special_split(inst[7:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=4)
+            if len(arg) > 5:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 4:
+                self.error(94, inst.strip())
+                return
+            
             string = self.eval(arg[0].strip(), {}, self.variables)
             width = self.eval(arg[1].strip(), {}, self.variables)
             fill_str = self.eval(arg[2].strip(), {}, self.variables)
@@ -842,17 +882,23 @@ class libraries:
                 return
             return str_center.center(string, width, fill=fill_str, overflow=overflow_type, unicode_width=unicode_width_type)
         elif inst.startswith("single_format("):
-            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
+            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=3)
+            if len(arg) > 4:
+                self.error(95, inst.strip())
+                return
             string = self.eval(arg[0].strip(), {}, self.variables)
             types = self.eval(arg[1].strip(), {}, self.variables)
             arg_value = self.eval(arg[2].strip(), {}, self.variables)
+            secondary = self.eval(arg[3].strip(), {}, self.variables)
             if not isinstance(string, str):
                 self.error(1001, string)
                 return
             if arg_value is None:
                 format_spec = types
-            else:
+            elif arg_value is not None and secondary is None:
                 format_spec = f"{types}{arg_value}"
+            else:
+                format_spec = f"{types}{arg_value}{secondary}"
         
             return f"{{:{format_spec}}}".format(string)
         elif inst.startswith("count_words("):
@@ -894,6 +940,12 @@ class libraries:
             arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
             string = self.eval(arg[0].strip(), {}, self.variables)
             length = self.eval(arg[1].strip(), {}, self.variables)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
             if not isinstance(string, str):
                 self.error(1001, string)
                 return
@@ -917,6 +969,12 @@ class libraries:
             arg = self.special_split(inst[10:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
             string = self.eval(arg[0].strip(), {}, self.variables)
             compare = self.eval(arg[1].strip(), {}, self.variables)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
             if not isinstance(string, str):
                 self.error(1001, string)
                 return
@@ -929,11 +987,65 @@ class libraries:
                 self.error(1001, string)
                 return
             import random
-            print(random.shuffle(list(string)))
-            return "".join(random.shuffle(list(string)))
+            return "".join(random.sample(string, len(string)))
+        elif inst.startswith("find_once("):
+            arg = self.special_split(inst[10:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            string = self.eval(arg[0].strip(), {}, self.variables)
+            target = self.eval(arg[1].strip(), {}, self.variables)
+            if len(arg) > 2:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
+            if not isinstance(string, str):
+                self.error(1001, string)
+                return
+            if not isinstance(target, str):
+                self.error(101, "string." + inst, "str", target)
+                return
+            return string.find(target)
+        elif inst.startswith("similarity("):
+            arg = self.special_split(inst[11:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
+            text1 = self.eval(arg[0].strip(), {}, self.variables)
+            text2 = self.eval(arg[1].strip(), {}, self.variables)
+            if len(arg) > 3:
+                self.error(95, inst.strip())
+                return
+            if len(arg) < 1:
+                self.error(94, inst.strip())
+                return
+            if len(arg) == 3:
+                include_case = self.eval(arg[2].strip(), {}, self.variables)
+            else: include_case = False
+            return self._compare(text1, text2, include_case)
         return
             
-    
+    def _compare(self, text1, text2, include_case=False):
+        text1 = list(text1)
+        text2 = list(text2)
+        # matches length
+        if len(text1) != len(text2):
+            if len(text1) > len(text2):
+                while len(text1) > len(text2):
+                    text2.append(None)
+            else:
+                while len(text1) < len(text2):
+                    text1.append(None)
+                    
+        total_acc = []
+        
+        for t1, t2 in zip(text1, text2):
+            if t1 != t2:
+                if include_case and t1 is not None and t2 is not None and t1.lower() == t2.lower():
+                    total_acc.append(1)
+                else:
+                    total_acc.append(0)
+            else:
+                total_acc.append(1)
+                
+        return sum(total_acc) / len(total_acc) # mean or averages
+        
     def _string_proper(self, text: str) -> str:
         au = self.py_modules.get("au")
         spell = au(lang="en")

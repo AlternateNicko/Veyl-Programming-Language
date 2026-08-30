@@ -184,6 +184,7 @@ class VEY:
         self.library = [] # library names will be appended here once they are imported
         self.nplibs_acc = {key: False for key in self.nplibs.keys()}
         self.py_modules = {}
+        self.has_dependencies = {}
         
         # FOR LIBRARIES
         self.debug = False
@@ -2235,7 +2236,7 @@ class VEY:
                         self.py_modules["sys"] = s
                     elif lib == "string":
                         from autocorrect import Speller
-                        self.py_modules["autocorrect"] = Speller
+                        self.py_modules["au"] = Speller
                     elif lib in self.nplibs.keys():
                         self.nplibs_acc[lib] = True # access allowed
                     else:
@@ -2680,7 +2681,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            try:
+            if True:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3095,17 +3096,17 @@ class VEY:
                     3rd Layer of parsing, which is evaluation, all assignments are
                     """
                     self.variables[left] = self.eval(main, {}, self.variables)
-            except Exception as e:
-                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-                if isinstance(e, ZeroDivisionError):
-                    self.error(4)
-                    return None
-                if isinstance(e, MemoryError):
-                    self.error(7)
-                    return
-                self.error(6, right)
-                print(e)
-                return None
+#            except Exception as e:
+#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+#                if isinstance(e, ZeroDivisionError):
+#                    self.error(4)
+#                    return None
+#                if isinstance(e, MemoryError):
+#                    self.error(7)
+#                    return
+#                self.error(6, right)
+#                print(e)
+#                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
