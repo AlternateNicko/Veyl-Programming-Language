@@ -181,7 +181,7 @@ and "variable" as the variable name
 ___
 # Setup
 ___
-The setup is simple, you can open up NBIDE.py for a quicker coding, or NBIDE.html for a detailed IDE, both are simple notebook like IDE (doesn't execute), then after writing the code, save it as .vey, a file extension for Veyl
+The setup is simple, you can open up NBIDE.py, a simple notebook like IDE (doesn't execute), then after writing the code, save it as .vey, a file extension for Veyl
 then at interactive_shell, type
 `veyl your_file.vey`
 to setup Veyl, you have to first make a .py python program outside of the directory where Veyl (VEYL) is stored.
