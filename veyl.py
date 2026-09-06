@@ -82,10 +82,6 @@ allowed_operators: Dict[type, Any] = {
 }
 
 class SafeEval(ast.NodeVisitor):
-    """
-    Made my own eval, due to problems with pythons eval() function, since the language may run python code while evaluating normal expressions
-    so this is a remake of python's eval without arbitrary python code executed, all of the things eval does are in here, just without arbitrary
-    """
     def __init__(self, globals: Dict[str, Any] = None, locals: Dict[str, Any] = None) -> None:
         self.globals: Dict[str, Any] = globals or {}
         self.locals: Dict[str, Any] = locals or {}
@@ -414,7 +410,6 @@ class VEY:
         then for the functions, it gets looped back to self.assigned variable, but this time as one function
         instead of multiple functions
         """
-        
         # gets expression form
         if expression in self.variables.keys():
             return self.variables[expression]
@@ -430,10 +425,10 @@ class VEY:
             past_vars = copy.deepcopy(self.variables)
             self.variables = locals
         # this part processes dictionary key and values for the self.eval item processing (yes, eval uses itself)
-        is_dict = self.special_find(expression, ":", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
         if len(expression) == 2 and self.expect(expression, (("(", ")"), ("[", "]"), ("{", "}"))):
             self.evals = False
             return self.single_eval(expression, globals, locals)
+        is_dict = self.special_find(expression, ":", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
         if is_dict:
             exp = self.special_split(expression, ":", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
             key = exp[0].strip()
@@ -571,7 +566,13 @@ class VEY:
         own parse+compile step and only pay for bytecode execution.
         """
         value = expr_dict["expr"]
-        if not isinstance(value, str):
+        if expr_dict.get("resolved", False) or not isinstance(value, str):
+            # already a concrete Python value (e.g. a string pulled out of a
+            # list/dict via indexing, like arr[0] -> "hello") - must NOT be
+            # fed to compile()/eval() again, since a bare word like "hello"
+            # is itself valid-looking Python (a Name node) and would be
+            # treated as arbitrary code/an identifier lookup instead of the
+            # literal string value it actually is.
             return value
         elif any(c in value for c in _UNSAFE):
             self.error(37, value)
@@ -636,7 +637,7 @@ class VEY:
         - arbitrary veyl expressions (like built ins)
         """
         iseval = False
-        expression = {"expr": None, "iseval": iseval, "variables": {}, "const": copy.deepcopy(self.constants), "compiled": None}
+        expression = {"expr": None, "iseval": iseval, "variables": {}, "const": copy.deepcopy(self.constants), "compiled": None, "resolved": False}
         variables = {}
         # example: cnt == length(list), should return cnt == 60 (cnt is non constant, list is)
         identifiers = self._extract_identifiers(exp)
@@ -648,6 +649,7 @@ class VEY:
             if not has_built_ins:
                 expression["expr"] = self.eval(exp, {}, self.variables, from_exp=True)
                 expression["iseval"] = True
+                expression["resolved"] = True # expr is now a concrete value (e.g. arr[0] -> "hello"), not source text to compile
                 var = exp
                 if self.special_find(exp, ".", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}")):
                     var = exp.split(".", 1)[0].strip()
@@ -706,9 +708,10 @@ class VEY:
                 
         else: # means it's instantly evaluated
             if self.expect(exp, [("'", "'"), ('"', '"')]):
-                expression["expr"] = exp
+                expression["expr"] = exp # still quoted source text, needs compiling
             else:
                 expression["expr"] = self.eval(exp, {}, self.variables, from_exp=True)
+                expression["resolved"] = True # concrete value, not source text to compile
             expression["iseval"] = True
             expression["variables"] = {}
         # save to cache
@@ -3514,7 +3517,7 @@ class VEY:
                     new_content += part  # Append the literal text
             return new_content
         else:
-            try:
+            if True:
                 if any(a in content for a in list(self.variables.keys())) and self.in_class[1]:
                     c = content.split(".")
                     if len(c) > 1:
@@ -3539,9 +3542,9 @@ class VEY:
                     v = t
                     
                 return v
-            except Exception as e:
-                self.error(46, content)
-                return
+#            except Exception as e:
+#                self.error(46, content)
+#                return
 
     def handle_class(self, line):
         insts = line[5:].strip()
