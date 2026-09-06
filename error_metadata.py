@@ -442,7 +442,31 @@ code = {
         "response": "AttributeError: Attribute `{arg1}` not found in class object `{arg2}`",
         "error": "AttributeError"
     },
+    109: {
+        "response": "SyntaxError: Functions and Method parameters expects a ending `)` parenthesis, but got none.",
+        "error": "SyntaxError"
+    },
     
+    
+    
+    
+    # library error metadatas goes way beyond, to error code 1000
+    1001: {
+        "response": "TypeError: `string` library always expects its first arguments to be a string, but got `{arg1}`",
+        "error": "TypeError"
+    },
+    1002: {
+        "response": "TypeError: `string.decode_ascii` expects a int vector for ascii numbers, not `{arg1}`",
+        "error": "TypeError"
+    },
+    1003: {
+        "response": "TypeError: `string.mask` expects an interger 2nd argument, but got `{arg1}`",
+        "error": "TypeError"
+    },
+    1004: {
+        "response": "TypeError: `string.find_encloser` expects all arguments to be string, but got either `{arg1}` or `{arg2}`",
+        "error": "TypeError"
+    },
 }
 
 with open("errormd.json", "w") as file:
