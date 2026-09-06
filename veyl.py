@@ -271,8 +271,8 @@ class VEY:
             'ModuleError': False,
             "AccessError": False,
             "LocalBoundError": False,
-            'FileNoFoundError': False,
-            "FileExisrsError": False,
+            'FileNotFoundError': False,
+            "FileExistsError": False,
             
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
@@ -566,13 +566,7 @@ class VEY:
         own parse+compile step and only pay for bytecode execution.
         """
         value = expr_dict["expr"]
-        if expr_dict.get("resolved", False) or not isinstance(value, str):
-            # already a concrete Python value (e.g. a string pulled out of a
-            # list/dict via indexing, like arr[0] -> "hello") - must NOT be
-            # fed to compile()/eval() again, since a bare word like "hello"
-            # is itself valid-looking Python (a Name node) and would be
-            # treated as arbitrary code/an identifier lookup instead of the
-            # literal string value it actually is.
+        if not isinstance(value, str):
             return value
         elif any(c in value for c in _UNSAFE):
             self.error(37, value)
@@ -637,7 +631,7 @@ class VEY:
         - arbitrary veyl expressions (like built ins)
         """
         iseval = False
-        expression = {"expr": None, "iseval": iseval, "variables": {}, "const": copy.deepcopy(self.constants), "compiled": None, "resolved": False}
+        expression = {"expr": None, "iseval": iseval, "variables": {}, "const": copy.deepcopy(self.constants), "compiled": None}
         variables = {}
         # example: cnt == length(list), should return cnt == 60 (cnt is non constant, list is)
         identifiers = self._extract_identifiers(exp)
@@ -649,7 +643,6 @@ class VEY:
             if not has_built_ins:
                 expression["expr"] = self.eval(exp, {}, self.variables, from_exp=True)
                 expression["iseval"] = True
-                expression["resolved"] = True # expr is now a concrete value (e.g. arr[0] -> "hello"), not source text to compile
                 var = exp
                 if self.special_find(exp, ".", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}")):
                     var = exp.split(".", 1)[0].strip()
@@ -708,10 +701,9 @@ class VEY:
                 
         else: # means it's instantly evaluated
             if self.expect(exp, [("'", "'"), ('"', '"')]):
-                expression["expr"] = exp # still quoted source text, needs compiling
+                expression["expr"] = exp
             else:
                 expression["expr"] = self.eval(exp, {}, self.variables, from_exp=True)
-                expression["resolved"] = True # concrete value, not source text to compile
             expression["iseval"] = True
             expression["variables"] = {}
         # save to cache
@@ -999,7 +991,7 @@ class VEY:
                 return [], 0
             return block, cnt, ogc
         else:
-            self.error()
+            self.error(68, f"Cannot assign {item_type} type")
             return None
         
     def num(self, value, numsys):
@@ -1168,7 +1160,7 @@ class VEY:
         i = 0
         condition = 0
         while i < len(parts):
-            if not line.startswith(parts[i][0]) and line.endswith(parts[i][1]):
+            if not line.startswith(parts[i][0]) and not line.endswith(parts[i][1]):
                 condition += 1
             i += 1
         if condition == 0:
@@ -2684,7 +2676,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            if True:
+            try:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3099,17 +3091,17 @@ class VEY:
                     3rd Layer of parsing, which is evaluation, all assignments are
                     """
                     self.variables[left] = self.eval(main, {}, self.variables)
-#            except Exception as e:
-#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-#                if isinstance(e, ZeroDivisionError):
-#                    self.error(4)
-#                    return None
-#                if isinstance(e, MemoryError):
-#                    self.error(7)
-#                    return
-#                self.error(6, right)
-#                print(e)
-#                return None
+            except Exception as e:
+                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                if isinstance(e, ZeroDivisionError):
+                    self.error(4)
+                    return None
+                if isinstance(e, MemoryError):
+                    self.error(7)
+                    return
+                self.error(6, right)
+                print(e)
+                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
@@ -3336,7 +3328,7 @@ class VEY:
                             self.error(101, ".mutable()", "str", self.types(self.variables[name]))
                             return None
                         self.variable_info[left]["Immutable"] = False
-                    elif var_func[cnt].startwith("swap_case(") and var_func[cnt].endswith(")"):
+                    elif var_func[cnt].startswith("swap_case(") and var_func[cnt].endswith(")"):
                         if not isinstance(self.variables[name], str):
                             self.error(101, ".string()", "str", self.types(self.variables[name]))
                             return None
