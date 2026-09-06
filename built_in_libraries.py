@@ -5,9 +5,9 @@ import sys
 from pathlib import Path
 
 from veyl import VEY
-import bil_helper.bil_string_center as str_center
-import bil_helper.bil_string_complete as stringtk
+from bil_helper.bil_string_complete import StringToolkit
 
+t, m, r, sys, json, au = None, None, None, None, None, None
 class libraries:
     """
     This module is specialized for built in libraries and helpers for veyl,
@@ -36,6 +36,13 @@ class libraries:
         self.error = data.error
     
     def process(self, line, vars, variant="av"):
+        global t, m, r, sys, json, au
+        t = self.py_modules.get("time")
+        m = self.py_modules.get("math")
+        r = self.py_modules.get("random")
+        json = self.py_modules.get("json")
+        sys = self.py_modules.get("sys")
+        au = self.py_modules.get("au")
         self.variables = vars
         if variant == "av":
             res = self.assign_variables(line, variant)
@@ -45,9 +52,7 @@ class libraries:
             return res
             
     def one_line(self, line, var):
-        t = self.py_modules.get("time")
-        json = self.py_modules.get("json")
-        sys = self.py_modules.get("sys")
+        global t, m, json, sys, r, au
         if var == "ol":
             instruction = line
             try:
@@ -187,10 +192,7 @@ class libraries:
                 print(e)
                 
     def assign_variables(self, line, var):
-        m = self.py_modules.get("math")
-        r = self.py_modules.get("random")
-        t = self.py_modules.get("time")
-        json = self.py_modules.get("json")
+        global t, m, r, json, sys, au
         """
         This function is specialized mostly for variable assignments like
         var = module.function()
@@ -669,38 +671,111 @@ class libraries:
         name = given[0].strip()
         value = given[1].strip()
         return self.eval(value, {}, self.variables, from_lib=True)
-    
+
+    def _type_check(self, value, expected, expected_name, ctx):
+        """
+        Shared type guard for string_dispatch. Fires error 101 (reusing the
+        existing "Function `{arg1}` expects a `{arg2}` argument type, but got
+        `{arg3}`" message - the string library never had its own error codes
+        registered in error_metadata.py/errormd.json, so codes 1001-1004 and
+        109 that used to appear here would KeyError inside handle.stderr()
+        the moment they fired) and returns False, or returns True if fine.
+        """
+        if not isinstance(value, expected):
+            self.error(101, ctx, expected_name, type(value).__name__)
+            return False
+        return True
+
+    def _dispatch_args(self, inst, prefix):
+        """
+        Splits the parenthesized, comma separated argument list of a
+        `string.<prefix>(...)` call into raw (unevaluated) argument strings.
+
+        Deliberately NOT self.special_split(raw, ",", ('"', "'", "(", "[", "{"),
+        ('"', "'", ")", "]", "}")) - that convention treats the open/close
+        sets as flat membership tests rather than a real stack, so a quoted
+        argument containing a bracket character (e.g. find_encloser("a [b] c",
+        "[", "]"), or a list literal of quoted strings like multi_split(s,
+        [",", ";"])) closes the "inside a quote" state on the bracket char
+        instead of the matching quote, and the whole split desyncs from
+        there (IndexError / SyntaxError further down at eval() time). This
+        walks the text with an explicit bracket stack and single-char quote
+        toggling instead, so nesting is tracked correctly.
+        """
+        raw = inst[len(prefix):-1].strip()
+        if raw == "":
+            return []
+        closers = {"(": ")", "[": "]", "{": "}"}
+        args = []
+        current = ""
+        stack = []
+        in_string = None
+        i = 0
+        while i < len(raw):
+            ch = raw[i]
+            if in_string:
+                current += ch
+                if ch == in_string:
+                    in_string = None
+                i += 1
+                continue
+            if ch in ("'", '"'):
+                in_string = ch
+                current += ch
+                i += 1
+                continue
+            if ch in closers:
+                stack.append(closers[ch])
+                current += ch
+                i += 1
+                continue
+            if stack and ch == stack[-1]:
+                stack.pop()
+                current += ch
+                i += 1
+                continue
+            if ch == "," and not stack:
+                args.append(current.strip())
+                current = ""
+                i += 1
+                continue
+            current += ch
+            i += 1
+        args.append(current.strip())
+        return args
+
     def string_dispatch(self, inst):
-        au = self.py_modules.get("au")
-        if not inst.strip().endswith(")"):
-            self.error(109, inst)
+        inst = inst.strip()
+        if not inst.endswith(")"):
+            self.error(68, f"string method call `{inst}` is missing a closing `)`")
             return None
+
+        # ---- hand-rolled methods (pre-existing, bug-fixed) ----
         if inst.startswith("proper("):
-            arg = inst[7:-1].strip()
+            arg = inst[len("proper("):-1].strip()
             string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            if not self._type_check(string, str, "str", "string.proper()"):
                 return
             return self._string_proper(string)
         elif inst.startswith("random("):
-            arg = inst[7:-1].strip()
+            arg = inst[len("random("):-1].strip()
             string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            if not self._type_check(string, str, "str", "string.random()"):
                 return
-            result = ""
             import random
-            for t in text:
-                if t.isalpha() and t.isascii:
-                    result += random.choice([t.upper(), t.lower()])
+            result = ""
+            # was `for t in text` - `text` didn't exist (NameError) and `t`
+            # shadowed the module-level `time` alias; renamed to `ch`/`string`
+            for ch in string:
+                if ch.isalpha() and ch.isascii():
+                    result += random.choice([ch.upper(), ch.lower()])
                 else:
-                    result += t
+                    result += ch
             return result
         elif inst.startswith("morse("):
-            arg = inst[6:-1].strip()
+            arg = inst[len("morse("):-1].strip()
             string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            if not self._type_check(string, str, "str", "string.morse()"):
                 return
             MORSE = {
                 'A': '.-',    'B': '-...',  'C': '-.-.',  'D': '-..',
@@ -716,115 +791,82 @@ class libraries:
             }
             return ' '.join(MORSE.get(char, '/') for char in string.upper())
         elif inst.startswith("autocorrect("):
-            arg = inst[12:-1].strip()
+            arg = inst[len("autocorrect("):-1].strip()
             string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            if not self._type_check(string, str, "str", "string.autocorrect()"):
                 return
-            au = self.py_modules.get("au")
+            global au
             spell = au(lang="en")
-            words = string.split()
+            words = string.split()  # was `text.split()` - `text` didn't exist
             corrected_words = []
             for word in words:
-                match = re.match(
-                    r"^([^a-z0-9]*)([a-z0-9'-]+)([^a-z0-9]*)$",
-                    word
-                )
+                match = re.match(r"^([^a-z0-9]*)([a-z0-9'-]+)([^a-z0-9]*)$", word)
                 if match:
-                    prefix = match.group(1)
-                    core = match.group(2)
-                    suffix = match.group(3)
+                    prefix, core, suffix = match.group(1), match.group(2), match.group(3)
                     if re.search(r"[a-z]", core):
                         core = spell(core)
                     word = prefix + core + suffix
                 corrected_words.append(word)
             return " ".join(corrected_words)
         elif inst.startswith("ascii("):
-            arg = inst[6:-1].strip()
+            arg = inst[len("ascii("):-1].strip()
             string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            if not self._type_check(string, str, "str", "string.ascii()"):
                 return
             return [ord(char) for char in string.strip()]
         elif inst.startswith("decode_ascii("):
-            arg = inst[13:-1].strip()
+            arg = inst[len("decode_ascii("):-1].strip()
             numbers = self.eval(arg, {}, self.variables)
-            if not isinstance(numbers, (list, tuple)):
-                self.error(1002, numbers)
+            if not self._type_check(numbers, (list, tuple), "list", "string.decode_ascii()"):
                 return
             return "".join(chr(number) for number in numbers)
         elif inst.startswith("contains("):
-            arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
-            if len(arg) > 3:
-                self.error(95, inst.strip())
-                return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            string1 = self.eval(arg[1].strip(), {}, self.variables)
-            
-            if not isinstance(string, str):
-                self.error(1001, string)
+            arg = self._dispatch_args(inst, "contains(")
+            string = self.eval(arg[0], {}, self.variables)
+            string1 = self.eval(arg[1], {}, self.variables)
+            if not self._type_check(string, str, "str", "string.contains()"):
                 return
             is_surround = True if len(arg) == 3 and self.eval(arg[2], {}, self.variables) else False
             if not is_surround:
                 string1 = " " + string1 + " "
             return string1 in string
         elif inst.startswith("wordstrwith("):
-            arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
+            arg = self._dispatch_args(inst, "wordstrwith(")
+            string = self.eval(arg[0], {}, self.variables)
+            string1 = self.eval(arg[1], {}, self.variables)
+            if not self._type_check(string, str, "str", "string.wordstrwith()"):
                 return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            string1 = self.eval(arg[1].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            return any(a.startswith(string1) for a in string.strip.split(" "))
+            # was `string.strip.split(" ")` - missing call parens on .strip
+            return any(a.startswith(string1) for a in string.strip().split(" "))
         elif inst.startswith("mask("):
-            arg = self.special_split(inst[5:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
+            arg = self._dispatch_args(inst, "mask(")
+            string = self.eval(arg[0], {}, self.variables)
+            interger = self.eval(arg[1], {}, self.variables)
+            if not self._type_check(string, str, "str", "string.mask()"):
                 return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            interger = self.eval(arg[1].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            if not isinstance(interger, int):
-                self.error(1003, string)
+            if not self._type_check(interger, int, "int", "string.mask()"):
                 return
             new_str = ""
             for i in range(len(string)):
-                if i < interger:
+                if i < interger:  # was missing the trailing colon (SyntaxError)
                     new_str += "*"
                     continue
                 new_str += string[i]
             return new_str
         elif inst.startswith("find_encloser("):
-            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=2)
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            enc1 = self.eval(arg[1].strip(), {}, self.variables)
-            enc2 = self.eval(arg[2].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            # was `inst[5:-1]` (copy-pasted from mask()'s 5-char prefix instead
+            # of find_encloser('s actual 14), which mangled the argument text
+            arg = self._dispatch_args(inst, "find_encloser(")
+            string = self.eval(arg[0], {}, self.variables)
+            enc1 = self.eval(arg[1], {}, self.variables)
+            enc2 = self.eval(arg[2], {}, self.variables)
+            if not self._type_check(string, str, "str", "string.find_encloser()"):
                 return
             if not isinstance(enc1, str) or not isinstance(enc2, str):
-                self.error(1004, enc1, enc2)
+                bad = enc1 if not isinstance(enc1, str) else enc2
+                self.error(101, "string.find_encloser()", "str", type(bad).__name__)
                 return
-            if len(arg) > 3:
-                self.error(95, inst.strip())
-                return
-            if len(arg) < 2:
-                self.error(94, inst.strip())
-                return
+            # was searching in an undefined `text` instead of `string`
             start = string.find(enc1)
             if start == -1:
                 return ""
@@ -833,221 +875,657 @@ class libraries:
             if end == -1:
                 return ""
             return string[start:end]
-        elif inst.startswith("collapse_whitespaces("):
-            arg = inst[21:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+
+        # ---- StringToolkit-backed methods (bil_string_complete.py) ----
+
+        # search & query
+        elif inst.startswith("find_all("):
+            args = self._dispatch_args(inst, "find_all(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.find_all()"):
                 return
-            return " ".join(string.split())
-        elif inst.startswith("remove_char("):
-            arg = self.special_split(inst[12:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
+            return StringToolkit.find_all(string, delims)
+        elif inst.startswith("find_words("):
+            args = self._dispatch_args(inst, "find_words(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            target = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.find_words()"):
                 return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
+            return StringToolkit.find_words(string, target)
+        elif inst.startswith("find_after("):
+            args = self._dispatch_args(inst, "find_after(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            target = self.eval(args[1].strip(), {}, self.variables)
+            target_after = self.eval(args[2].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.find_after()"):
                 return
-            
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            target = self.eval(arg[1].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.find_after(string, target, target_after)
+        elif inst.startswith("find_before("):
+            args = self._dispatch_args(inst, "find_before(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            target = self.eval(args[1].strip(), {}, self.variables)
+            target_before = self.eval(args[2].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.find_before()"):
                 return
-            return "".join(string.split())
-        elif inst.startswith("romanize("):
-            arg = inst[9:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.find_before(string, target, target_before)
+        elif inst.startswith("contains_any("):
+            args = self._dispatch_args(inst, "contains_any(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.contains_any()"):
                 return
-            from unidecode import unidecode
-            return unidecode(string)
-        elif inst.startswith("center("):
-            arg = self.special_split(inst[7:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=4)
-            if len(arg) > 5:
-                self.error(95, inst.strip())
+            return StringToolkit.contains_any(string, delims)
+        elif inst.startswith("contains_all("):
+            args = self._dispatch_args(inst, "contains_all(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.contains_all()"):
                 return
-            if len(arg) < 4:
-                self.error(94, inst.strip())
+            return StringToolkit.contains_all(string, delims)
+        elif inst.startswith("startswith_any("):
+            args = self._dispatch_args(inst, "startswith_any(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.startswith_any()"):
                 return
-            
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            width = self.eval(arg[1].strip(), {}, self.variables)
-            fill_str = self.eval(arg[2].strip(), {}, self.variables)
-            overflow_type = self.eval(arg[3].strip(), {}, self.variables)
-            unicode_width_type = self.eval(arg[4].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.startswith_any(string, delims)
+        elif inst.startswith("endswith_any("):
+            args = self._dispatch_args(inst, "endswith_any(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.endswith_any()"):
                 return
-            return str_center.center(string, width, fill=fill_str, overflow=overflow_type, unicode_width=unicode_width_type)
-        elif inst.startswith("single_format("):
-            arg = self.special_split(inst[14:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=3)
-            if len(arg) > 4:
-                self.error(95, inst.strip())
+            return StringToolkit.endswith_any(string, delims)
+        elif inst.startswith("multi_split("):
+            args = self._dispatch_args(inst, "multi_split(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            delims = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.multi_split()"):
                 return
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            types = self.eval(arg[1].strip(), {}, self.variables)
-            arg_value = self.eval(arg[2].strip(), {}, self.variables)
-            secondary = self.eval(arg[3].strip(), {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.multi_split(string, delims)
+
+        # extraction
+        elif inst.startswith("extract_emails("):
+            args = self._dispatch_args(inst, "extract_emails(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_emails()"):
                 return
-            if arg_value is None:
-                format_spec = types
-            elif arg_value is not None and secondary is None:
-                format_spec = f"{types}{arg_value}"
-            else:
-                format_spec = f"{types}{arg_value}{secondary}"
-        
-            return f"{{:{format_spec}}}".format(string)
-        elif inst.startswith("count_words("):
-            arg = inst[12:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.extract_emails(string)
+        elif inst.startswith("extract_url("):
+            args = self._dispatch_args(inst, "extract_url(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_url()"):
                 return
-            return len(" ".join(string.split()).split(" ")) # collapses whitespaces before splitting
-        elif inst.startswith("remove_digit("):
-            arg = inst[13:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.extract_url(string)
+        elif inst.startswith("extract_numericals("):
+            args = self._dispatch_args(inst, "extract_numericals(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_numericals()"):
                 return
-            return ''.join([char for char in string if not char.isdigit()])
-        elif inst.startswith("remove_alpha("):
-            arg = inst[13:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.extract_numericals(string)
+        elif inst.startswith("extract_integers("):
+            args = self._dispatch_args(inst, "extract_integers(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_integers()"):
                 return
-            return ''.join([char for char in string if not char.isalpha()])
-        elif inst.startswith("keep_digit("):
-            arg = inst[11:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.extract_integers(string)
+        elif inst.startswith("extract_decimals("):
+            args = self._dispatch_args(inst, "extract_decimals(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_decimals()"):
                 return
-            return ''.join([char for char in string if char.isdigit()])
-        elif inst.startswith("keep_alpha("):
-            arg = inst[11:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
+            return StringToolkit.extract_decimals(string)
+        elif inst.startswith("extract_dates("):
+            args = self._dispatch_args(inst, "extract_dates(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_dates()"):
                 return
-            return ''.join([char for char in string if char.isalpha()])
-        elif inst.startswith("truncate("):
-            arg = self.special_split(inst[9:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            length = self.eval(arg[1].strip(), {}, self.variables)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
+            fmt = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else "dd/mm/yy"
+            return StringToolkit.extract_dates(string, fmt)
+        elif inst.startswith("extract_encloser("):
+            args = self._dispatch_args(inst, "extract_encloser(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            left = self.eval(args[1].strip(), {}, self.variables)
+            right = self.eval(args[2].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.extract_encloser()"):
                 return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            return string[:length]
-        elif inst.startswith("count_digits(") and inst.endswith(")"):
-            arg = inst[13:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            return len(" ".join([char for char in string if char.isdigit()]))
-        elif inst.startswith("ispalindrome("):
-            arg = inst[13:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            reverse = "".join(list(reversed(string)))
-            return True if string == reverse else False
-        elif inst.startswith("isanagram("):
-            arg = self.special_split(inst[10:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            compare = self.eval(arg[1].strip(), {}, self.variables)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
-                return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            reverse = "".join(list(reversed(string)))
-            return True if reverse == compare else False
-        elif inst.startswith("shuffle("):
-            arg = inst[8:-1].strip()
-            string = self.eval(arg, {}, self.variables)
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            import random
-            return "".join(random.sample(string, len(string)))
-        elif inst.startswith("find_once("):
-            arg = self.special_split(inst[10:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            string = self.eval(arg[0].strip(), {}, self.variables)
-            target = self.eval(arg[1].strip(), {}, self.variables)
-            if len(arg) > 2:
-                self.error(95, inst.strip())
-                return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
-                return
-            if not isinstance(string, str):
-                self.error(1001, string)
-                return
-            if not isinstance(target, str):
-                self.error(101, "string." + inst, "str", target)
-                return
-            return string.find(target)
+            return StringToolkit.extract_encloser(string, left, right)
+
+        # similarity
         elif inst.startswith("similarity("):
-            arg = self.special_split(inst[11:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"), limit=1)
-            text1 = self.eval(arg[0].strip(), {}, self.variables)
-            text2 = self.eval(arg[1].strip(), {}, self.variables)
-            if len(arg) > 3:
-                self.error(95, inst.strip())
+            args = self._dispatch_args(inst, "similarity(")
+            text1 = self.eval(args[0].strip(), {}, self.variables)
+            text2 = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(text1, str, "str", "string.similarity()"):
                 return
-            if len(arg) < 1:
-                self.error(94, inst.strip())
+            if not self._type_check(text2, str, "str", "string.similarity()"):
                 return
-            if len(arg) == 3:
-                include_case = self.eval(arg[2].strip(), {}, self.variables)
-            else: include_case = False
-            return self._compare(text1, text2, include_case)
-        return
+            method = self.eval(args[2].strip(), {}, self.variables) if len(args) > 2 else "levenshtein"
+            try:
+                return StringToolkit.similarity(text1, text2, method)
+            except (ValueError, ZeroDivisionError) as e:
+                self.error(70, f"string.similarity() - {e}")
+                return
+
+        # case conversion
+        elif inst.startswith("snake_case("):
+            args = self._dispatch_args(inst, "snake_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.snake_case()"):
+                return
+            return StringToolkit.snake_case(string)
+        elif inst.startswith("camel_case("):
+            args = self._dispatch_args(inst, "camel_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.camel_case()"):
+                return
+            return StringToolkit.camel_case(string)
+        elif inst.startswith("pascal_case("):
+            args = self._dispatch_args(inst, "pascal_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.pascal_case()"):
+                return
+            return StringToolkit.pascal_case(string)
+        elif inst.startswith("kebab_case("):
+            args = self._dispatch_args(inst, "kebab_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.kebab_case()"):
+                return
+            return StringToolkit.kebab_case(string)
+        elif inst.startswith("screaming_snake_case("):
+            args = self._dispatch_args(inst, "screaming_snake_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.screaming_snake_case()"):
+                return
+            return StringToolkit.screaming_snake_case(string)
+        elif inst.startswith("dot_case("):
+            args = self._dispatch_args(inst, "dot_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.dot_case()"):
+                return
+            return StringToolkit.dot_case(string)
+        elif inst.startswith("path_case("):
+            args = self._dispatch_args(inst, "path_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.path_case()"):
+                return
+            return StringToolkit.path_case(string)
+        elif inst.startswith("alternating_case("):
+            args = self._dispatch_args(inst, "alternating_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.alternating_case()"):
+                return
+            return StringToolkit.alternating_case(string)
+        elif inst.startswith("detect_case("):
+            args = self._dispatch_args(inst, "detect_case(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.detect_case()"):
+                return
+            return StringToolkit.detect_case(string)
+
+        # masking / redaction
+        elif inst.startswith("redact("):
+            args = self._dispatch_args(inst, "redact(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            target = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.redact()"):
+                return
+            return StringToolkit.redact(string, target)
+        elif inst.startswith("mask_emails("):
+            args = self._dispatch_args(inst, "mask_emails(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.mask_emails()"):
+                return
+            return StringToolkit.mask_emails(string)
+        elif inst.startswith("mask_urls("):
+            args = self._dispatch_args(inst, "mask_urls(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.mask_urls()"):
+                return
+            return StringToolkit.mask_urls(string)
+        elif inst.startswith("mask_numbers("):
+            args = self._dispatch_args(inst, "mask_numbers(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.mask_numbers()"):
+                return
+            return StringToolkit.mask_numbers(string)
+
+        # formatting
+        elif inst.startswith("wrap("):
+            args = self._dispatch_args(inst, "wrap(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            width = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.wrap()"):
+                return
+            if not self._type_check(width, int, "int", "string.wrap()"):
+                return
+            return StringToolkit.wrap(string, width)
+        elif inst.startswith("indent("):
+            args = self._dispatch_args(inst, "indent(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            width = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.indent()"):
+                return
+            if not self._type_check(width, int, "int", "string.indent()"):
+                return
+            return StringToolkit.indent(string, width)
+        elif inst.startswith("dedent("):
+            args = self._dispatch_args(inst, "dedent(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            width = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.dedent()"):
+                return
+            if not self._type_check(width, int, "int", "string.dedent()"):
+                return
+            return StringToolkit.dedent(string, width)
+        elif inst.startswith("align_left("):
+            args = self._dispatch_args(inst, "align_left(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.align_left()"):
+                return
+            width = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else None
+            return StringToolkit.align_left(string, width)
+        elif inst.startswith("align_right("):
+            args = self._dispatch_args(inst, "align_right(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.align_right()"):
+                return
+            width = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else None
+            return StringToolkit.align_right(string, width)
+        elif inst.startswith("align_center("):
+            args = self._dispatch_args(inst, "align_center(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.align_center()"):
+                return
+            width = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else None
+            return StringToolkit.align_center(string, width)
+        elif inst.startswith("box("):
+            args = self._dispatch_args(inst, "box(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.box()"):
+                return
+            return StringToolkit.box(string)
+        elif inst.startswith("column("):
+            args = self._dispatch_args(inst, "column(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.column()"):
+                return
+            split_by = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else ","
+            return StringToolkit.column(string, split_by)
+        elif inst.startswith("justify("):
+            args = self._dispatch_args(inst, "justify(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            width = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.justify()"):
+                return
+            if not self._type_check(width, int, "int", "string.justify()"):
+                return
+            return StringToolkit.justify(string, width)
+        elif inst.startswith("number_lines("):
+            args = self._dispatch_args(inst, "number_lines(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.number_lines()"):
+                return
+            start = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else 1
+            return StringToolkit.number_lines(string, start)
+        elif inst.startswith("replace_between("):
+            args = self._dispatch_args(inst, "replace_between(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            enc1 = self.eval(args[1].strip(), {}, self.variables)
+            enc2 = self.eval(args[2].strip(), {}, self.variables)
+            replacement = self.eval(args[3].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.replace_between()"):
+                return
+            return StringToolkit.replace_between(string, enc1, enc2, replacement)
+
+        # encoding / decoding
+        elif inst.startswith("base64_encode("):
+            args = self._dispatch_args(inst, "base64_encode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.base64_encode()"):
+                return
+            return StringToolkit.base64_encode(string)
+        elif inst.startswith("base64_decode("):
+            args = self._dispatch_args(inst, "base64_decode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.base64_decode()"):
+                return
+            try:
+                return StringToolkit.base64_decode(string)
+            except Exception:
+                self.error(70, f"string.base64_decode() - `{string}` is not valid base64")
+                return
+        elif inst.startswith("hex_encode("):
+            args = self._dispatch_args(inst, "hex_encode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.hex_encode()"):
+                return
+            return StringToolkit.hex_encode(string)
+        elif inst.startswith("hex_decode("):
+            args = self._dispatch_args(inst, "hex_decode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.hex_decode()"):
+                return
+            try:
+                return StringToolkit.hex_decode(string)
+            except Exception:
+                self.error(70, f"string.hex_decode() - `{string}` is not valid hex")
+                return
+        elif inst.startswith("url_encode("):
+            args = self._dispatch_args(inst, "url_encode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.url_encode()"):
+                return
+            return StringToolkit.url_encode(string)
+        elif inst.startswith("url_decode("):
+            args = self._dispatch_args(inst, "url_decode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.url_decode()"):
+                return
+            return StringToolkit.url_decode(string)
+        elif inst.startswith("html_encode("):
+            args = self._dispatch_args(inst, "html_encode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.html_encode()"):
+                return
+            return StringToolkit.html_encode(string)
+        elif inst.startswith("html_decode("):
+            args = self._dispatch_args(inst, "html_decode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.html_decode()"):
+                return
+            return StringToolkit.html_decode(string)
+
+        # ciphers
+        elif inst.startswith("rot13("):
+            args = self._dispatch_args(inst, "rot13(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.rot13()"):
+                return
+            return StringToolkit.rot13(string)
+        elif inst.startswith("atbash("):
+            args = self._dispatch_args(inst, "atbash(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.atbash()"):
+                return
+            return StringToolkit.atbash(string)
+        elif inst.startswith("reverse_words("):
+            args = self._dispatch_args(inst, "reverse_words(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.reverse_words()"):
+                return
+            return StringToolkit.reverse_words(string)
+        elif inst.startswith("bacon("):
+            args = self._dispatch_args(inst, "bacon(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.bacon()"):
+                return
+            decode = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else False
+            return StringToolkit.bacon(string, decode)
+
+        # corrections
+        elif inst.startswith("detect_typo("):
+            args = self._dispatch_args(inst, "detect_typo(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.detect_typo()"):
+                return
+            return StringToolkit.detect_typo(string)
+        elif inst.startswith("fuzzy_search("):
+            args = self._dispatch_args(inst, "fuzzy_search(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            choices = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.fuzzy_search()"):
+                return
+            if not self._type_check(choices, (list, tuple), "list", "string.fuzzy_search()"):
+                return
+            threshold = self.eval(args[2].strip(), {}, self.variables) if len(args) > 2 else 0.6
+            return StringToolkit.fuzzy_search(string, choices, threshold)
+
+        # unicode
+        elif inst.startswith("unicode_info("):
+            args = self._dispatch_args(inst, "unicode_info(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.unicode_info()"):
+                return
+            return StringToolkit.unicode_info(string)
+        elif inst.startswith("unicode_name("):
+            args = self._dispatch_args(inst, "unicode_name(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.unicode_name()"):
+                return
+            return StringToolkit.unicode_name(string)
+        elif inst.startswith("codepoints("):
+            args = self._dispatch_args(inst, "codepoints(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.codepoints()"):
+                return
+            return StringToolkit.codepoints(string)
+        elif inst.startswith("from_codepoints("):
+            args = self._dispatch_args(inst, "from_codepoints(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.from_codepoints()"):
+                return
+            try:
+                return StringToolkit.from_codepoints(string)
+            except Exception:
+                self.error(70, f"string.from_codepoints() - `{string}` is not a valid codepoint list")
+                return
+        elif inst.startswith("normalize_unicode("):
+            args = self._dispatch_args(inst, "normalize_unicode(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.normalize_unicode()"):
+                return
+            form = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else "NFC"
+            try:
+                return StringToolkit.normalize_unicode(string, form)
+            except Exception:
+                self.error(70, f"string.normalize_unicode() - `{form}` is not a valid unicode normalization form")
+                return
+        elif inst.startswith("remove_accents("):
+            args = self._dispatch_args(inst, "remove_accents(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.remove_accents()"):
+                return
+            return StringToolkit.remove_accents(string)
+        elif inst.startswith("is_emoji("):
+            args = self._dispatch_args(inst, "is_emoji(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_emoji()"):
+                return
+            return StringToolkit.is_emoji(string)
+        elif inst.startswith("emoji_count("):
+            args = self._dispatch_args(inst, "emoji_count(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.emoji_count()"):
+                return
+            return StringToolkit.emoji_count(string)
+        elif inst.startswith("graphemes("):
+            args = self._dispatch_args(inst, "graphemes(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.graphemes()"):
+                return
+            return StringToolkit.graphemes(string)
+
+        # statistics
+        elif inst.startswith("stats("):
+            args = self._dispatch_args(inst, "stats(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.stats()"):
+                return
+            return StringToolkit.stats(string)
+
+        # diffs
+        elif inst.startswith("diff_lines("):
+            args = self._dispatch_args(inst, "diff_lines(")
+            s1 = self.eval(args[0].strip(), {}, self.variables)
+            s2 = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(s1, str, "str", "string.diff_lines()"):
+                return
+            if not self._type_check(s2, str, "str", "string.diff_lines()"):
+                return
+            return StringToolkit.diff_lines(s1, s2)
+        elif inst.startswith("diff_words("):
+            args = self._dispatch_args(inst, "diff_words(")
+            s1 = self.eval(args[0].strip(), {}, self.variables)
+            s2 = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(s1, str, "str", "string.diff_words()"):
+                return
+            if not self._type_check(s2, str, "str", "string.diff_words()"):
+                return
+            return StringToolkit.diff_words(s1, s2)
+        elif inst.startswith("diff_chars("):
+            args = self._dispatch_args(inst, "diff_chars(")
+            s1 = self.eval(args[0].strip(), {}, self.variables)
+            s2 = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(s1, str, "str", "string.diff_chars()"):
+                return
+            if not self._type_check(s2, str, "str", "string.diff_chars()"):
+                return
+            return StringToolkit.diff_chars(s1, s2)
+        elif inst.startswith("patch("):
+            args = self._dispatch_args(inst, "patch(")
+            s1 = self.eval(args[0].strip(), {}, self.variables)
+            s2 = self.eval(args[1].strip(), {}, self.variables)
+            if not self._type_check(s1, str, "str", "string.patch()"):
+                return
+            if not self._type_check(s2, str, "str", "string.patch()"):
+                return
+            return StringToolkit.patch(s1, s2)
+
+        # parsing
+        elif inst.startswith("parse_kv("):
+            args = self._dispatch_args(inst, "parse_kv(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.parse_kv()"):
+                return
+            pair_sep = self.eval(args[1].strip(), {}, self.variables) if len(args) > 1 else ";"
+            kv_sep = self.eval(args[2].strip(), {}, self.variables) if len(args) > 2 else "="
+            return StringToolkit.parse_kv(string, pair_sep, kv_sep)
+
+        # validation (bool)
+        elif inst.startswith("is_email("):
+            args = self._dispatch_args(inst, "is_email(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_email()"):
+                return
+            return StringToolkit.is_email(string)
+        elif inst.startswith("is_url("):
+            args = self._dispatch_args(inst, "is_url(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_url()"):
+                return
+            return StringToolkit.is_url(string)
+        elif inst.startswith("is_uuid("):
+            args = self._dispatch_args(inst, "is_uuid(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_uuid()"):
+                return
+            return StringToolkit.is_uuid(string)
+        elif inst.startswith("is_ipv4("):
+            args = self._dispatch_args(inst, "is_ipv4(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_ipv4()"):
+                return
+            return StringToolkit.is_ipv4(string)
+        elif inst.startswith("is_ipv6("):
+            args = self._dispatch_args(inst, "is_ipv6(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_ipv6()"):
+                return
+            return StringToolkit.is_ipv6(string)
+        elif inst.startswith("is_json("):
+            args = self._dispatch_args(inst, "is_json(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_json()"):
+                return
+            return StringToolkit.is_json(string)
+        elif inst.startswith("is_xml("):
+            args = self._dispatch_args(inst, "is_xml(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_xml()"):
+                return
+            return StringToolkit.is_xml(string)
+        elif inst.startswith("is_base64("):
+            args = self._dispatch_args(inst, "is_base64(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.is_base64()"):
+                return
+            return StringToolkit.is_base64(string)
+
+        # validation (dict)
+        elif inst.startswith("validate_email("):
+            args = self._dispatch_args(inst, "validate_email(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_email()"):
+                return
+            return StringToolkit.validate_email(string)
+        elif inst.startswith("validate_url("):
+            args = self._dispatch_args(inst, "validate_url(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_url()"):
+                return
+            return StringToolkit.validate_url(string)
+        elif inst.startswith("validate_ip("):
+            args = self._dispatch_args(inst, "validate_ip(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_ip()"):
+                return
+            return StringToolkit.validate_ip(string)
+        elif inst.startswith("validate_uuid("):
+            args = self._dispatch_args(inst, "validate_uuid(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_uuid()"):
+                return
+            return StringToolkit.validate_uuid(string)
+        elif inst.startswith("validate_hex("):
+            args = self._dispatch_args(inst, "validate_hex(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_hex()"):
+                return
+            return StringToolkit.validate_hex(string)
+        elif inst.startswith("validate_json("):
+            args = self._dispatch_args(inst, "validate_json(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.validate_json()"):
+                return
+            return StringToolkit.validate_json(string)
+
+        # misc
+        elif inst.startswith("shuffle("):
+            args = self._dispatch_args(inst, "shuffle(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.shuffle()"):
+                return
+            return StringToolkit.shuffle(string)
+        elif inst.startswith("scramble_words("):
+            args = self._dispatch_args(inst, "scramble_words(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.scramble_words()"):
+                return
+            return StringToolkit.scramble_words(string)
+        elif inst.startswith("letter_frequency("):
+            args = self._dispatch_args(inst, "letter_frequency(")
+            string = self.eval(args[0].strip(), {}, self.variables)
+            if not self._type_check(string, str, "str", "string.letter_frequency()"):
+                return
+            return StringToolkit.letter_frequency(string)
+
+        else:
+            self.error(6, inst.split("(", 1)[0])
+            return None
             
-    def _compare(self, text1, text2, include_case=False):
-        text1 = list(text1)
-        text2 = list(text2)
-        # matches length
-        if len(text1) != len(text2):
-            if len(text1) > len(text2):
-                while len(text1) > len(text2):
-                    text2.append(None)
-            else:
-                while len(text1) < len(text2):
-                    text1.append(None)
-                    
-        total_acc = []
+            
         
-        for t1, t2 in zip(text1, text2):
-            if t1 != t2:
-                if include_case and t1 is not None and t2 is not None and t1.lower() == t2.lower():
-                    total_acc.append(1)
-                else:
-                    total_acc.append(0)
-            else:
-                total_acc.append(1)
-                
-        return sum(total_acc) / len(total_acc) # mean or averages
         
+        
+        
+        
+    def _morse(self, text: str) -> str:
+        pass
+    
     def _string_proper(self, text: str) -> str:
-        au = self.py_modules.get("au")
+        global au
         spell = au(lang="en")
         text = text.lower()
         text = re.sub(r"[\n\r\t]+", " ", text)
