@@ -160,7 +160,7 @@ class SafeEval(ast.NodeVisitor):
             raise ValueError(f"Unsupported operation: {ast.dump(node)} line {line}")
 
 class VEY:
-    def __init__(self, instructions, special_library={}, path=None, file="module", extension=".vey"):
+    def __init__(self, instructions, special_library={}, force_raise=False, path=None, file="module", extension=".vey"):
         # nplibs holds dictionaries like this
         # "lib_name": module_class,
         # where module_class is the class object of that library
@@ -172,6 +172,7 @@ class VEY:
         self.file_name = file # name of file
         self.file_extension = extension # file extension of the file
         self.run = True # Runtime flag
+        self.cause_raise = force_raise
         
         # LIBRARIES
         self.nplibs = special_library
@@ -1013,11 +1014,13 @@ class VEY:
             self.error(45)
             return
     
-    def convert_arg(self, args):
+    def convert_arg(self, args, external=False):
         """
         converts user defined function and method args
         by their types
         """
+        if external and not isinstance(args, str):
+            return args
         if args.startswith('"') and args.endswith('"') or args.startswith("'") and args.endswith("'"):
             return args[1:-1]
         if args == "":
@@ -1168,7 +1171,7 @@ class VEY:
         return False
     
     def error(self, code, arg1=None, arg2=None, arg3=None):
-        errors = handle(**self.__dict__)
+        errors = handle(self.__dict__)
         self.Errors = errors.stderr(code, arg1, arg2, arg3)
         return
     
@@ -3017,9 +3020,12 @@ class VEY:
                 # handles classes
                 elif main.startswith(tuple(self.classes.keys())):
                     name = None
+                    main = main.split("(", 1)[0].strip()
                     for i in self.classes.keys():
-                        if i in main:
+                        if i == main:
                             name = i
+                    if name is None:
+                        self.error(6, right)
                     self.objects[left] = {"variables": {}, "instance": name, "inherits": self.classes[name]["inherits"]}
                     const_name = syntax_encloser.MethodSSE.name_for("constructor")
                     if "(" in main and ")" in main and const_name in list(self.classes[name]["methods"].keys()):
@@ -3123,6 +3129,7 @@ class VEY:
         if ismethod:
             self.methods(left, right) # next is methods
         return
+        
     def methods(self, left, right):
         """
         3rd layer of parsing

@@ -260,7 +260,7 @@ class libraries:
                     a = self.eval(args, {}, self.variables, from_lib=True)
                     self.variables[left] = m.exp(a)
                 elif man.startswith("log(") and man.endswith(")"):
-                    args = man[4:-1].strip().strip(",")
+                    args = man[4:-1].strip().split(",")
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     if len(args) > 1:
                         b = self.eval(args[1], {}, self.variables, from_lib=True)
@@ -398,7 +398,7 @@ class libraries:
                 elif man.startswith("choice(") and man.endswith(")"):
                     libs = True
                     arg = self.eval(man[7:-1].strip(), {}, self.variables, from_lib=True)
-                    if not isinstance(arg[0], int) or not isinstance(arg[1], int):
+                    if not isinstance(arg, (list, dict)):
                         if not self.attempt:
                             print("\033[31mTraceback(most_recent_call_back):\033[0m")
                             for i in self.traceback:
