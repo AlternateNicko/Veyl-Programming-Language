@@ -220,7 +220,7 @@ class VEY:
         self.in_if = False # inside an if statement
         self.if_executed = False # if an if statement is executed with the conditions being true, turns True
         self.condition = False # for the if, else if statement, turns true once their condition is also true
-        self.attempt = False # for try-except, but in this language is attempt-catch, once attempting to execute a code, all errors wont print out a trace back, instead it gets catch if it matches with the error name of the catch block
+        self.attempt = False # for try-except, but in this language is try-catch, once attempting to execute a code, all errors wont print out a trace back, instead it gets catch if it matches with the error name of the catch block
         self.in_class = [None, False, None] # if the program is currently in a code, first index stores the name of the class, the second shows True if they are in a class, third is what class objecf it is (None if it's inside a class) else False
         self.breaking = False # force break out loops
         self.continuing = False # continues
@@ -251,8 +251,8 @@ class VEY:
         self.original_var = [] # original variable once calling a new function, the self.variables are replace with a new dictionary, and original_var stores the global variables
         self.cache = {
             "eval": {}, # for evaluation (v1.0.3)
-            "func": {}, # function cache (v1.0.5)
-            "class": {}, # class method cache (v1.0.5)
+            "func": {}, # function cache (v1.0.7)
+            "class": {}, # class method cache (v1.0.7)
             "cond": {}, # for conditions (v1.0.5)
         } # the cache, mostly use for memoization, func and classes still has no use for now
         self.objects = {} # for defined variables using class objects
@@ -277,6 +277,7 @@ class VEY:
             
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
+        
         
     def build_instructions(self, source):
         """
@@ -572,6 +573,7 @@ class VEY:
         elif any(c in value for c in _UNSAFE):
             self.error(37, value)
             return None
+            
         code = expr_dict.get("compiled")
         if code is None:
             try:
@@ -587,7 +589,10 @@ class VEY:
                 self.error(51, value)
                 return None
             expr_dict["compiled"] = code
-        return eval(code, globals, locals)
+        try:
+            return eval(code, globals, locals)
+        except Exception:
+            return value
         
     def expression(self, exp):
         # self.eval() was written and implemented a year ago, this function was just added now for optimization and speed
@@ -856,12 +861,13 @@ class VEY:
                     "Immutable": False
                 }
             self.constants[v][1] = self.variables[v]
-        # one time class variables
+        
+        # class variables
         if self.in_class[1] and self.in_class[2] is not None and self.in_class[2] in self.objects.keys():
             self.objects[self.in_class[2]]["variables"]["<dict>"].update(self.objects[self.in_class[2]]["variables"])
         elif self.in_class[1]:
             self.classes[self.in_class[0]]["variables"]["<dict>"].update(self.classes[self.in_class[0]]["variables"])
-        
+            
         # public variables
         self.variables.update(self.public)
         self.global_var.update(self.variables)
@@ -1074,24 +1080,7 @@ class VEY:
         if mode == "p":
             return type(value)
         if mode == "c" or mode == "clear" or mode == "clean":
-            if isinstance(value, str):
-                return "string"
-            elif isinstance(value, int):
-                return "int"
-            elif isinstance(value, float):
-                return "float"
-            elif isinstance(value, list):
-                return "vector"
-            elif isinstance(value, tuple):
-                return "array"
-            elif isinstance(value, dict):
-                return "map"
-            elif isinstance(value, set):
-                return "set"
-            else:
-                # supports any type
-                new_type = str(type(value)).split(" ", 1)[1][1:-2]
-                return new_type
+            return type(value).__name__
         
     def run_condition(self, cond):
         """
@@ -1314,9 +1303,9 @@ class VEY:
                 and line[i:i + len(split_str)] == split_str
             ):
                 new_line += (
-                    "¤"
+                    "𐕣⸮ꙮ𒐫" # a string ritual
                     if not ret_capture_group
-                    else f"¤{split_str}¤"
+                    else f"𐕣⸮ꙮ𒐫{split_str}𐕣⸮ꙮ𒐫"
                 )
                 splits += 1
                 i += len(split_str)
@@ -1326,8 +1315,8 @@ class VEY:
             new_line += line[i]
             i += 1
     
-        if "¤" in new_line:
-            return new_line.split("¤")
+        if "𐕣⸮ꙮ𒐫" in new_line:
+            return new_line.split("𐕣⸮ꙮ𒐫")
         return [new_line]
     
     def special_find(self, line, target, in_char1, in_char2, ranges=[0, -1]):
@@ -1597,17 +1586,20 @@ class VEY:
             return
     
     def datatype_keyword(self, instruction, acc="pub"):
-        # this is apart of self.execute_functions() for data type syntaxes
-        type = None
         line = instruction.split(" ", 1)
         data_type = line[0].strip()
         instruction = line[1].strip()
         if self.special_find(instruction, "=", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
+            name = instruction.split("=", 1)[0].strip()
             self.assign_variable(instruction, dt=data_type)
-            return
+            if acc == "pub" and self.in_class[1]:
+                self.special[self.in_class[0]]["variables"][name] = True
+                self.process_vars()
+            elif acc == "priv" and self.in_class[1]:
+                self.special[self.in_class[0]]["variables"][name] = False
+                self.process_vars()
         elif instruction.startswith("func "):
             self.function_creation(instruction, acc, data_type)
-        # there are more to come
     
     def function_creation(self, instruction, acc_type, dt="<any>"):
         types = acc_type
@@ -2095,6 +2087,8 @@ class VEY:
                 instruction = instruction[8:].strip()
                 types = "priv"
             # Function or variables
+            if instruction.startswith(tuple(self.datatypes)):
+                self.datatype_keyword(instruction, types)
             if not instruction.startswith("func ") and "=" in instruction: # meaning it's a variable assignment
                 arg = instruction.split("=", 1)
                 name = arg[0].strip()
@@ -2138,7 +2132,7 @@ class VEY:
                     self.private_classes[name] = self.classes[name]
         # error handling keywords
         elif instruction.startswith("try"):
-            # error handling by catching errors, with throw and catch and finally
+            # error handling by catching errors, with throw and catch
             block, count, eogc = self.get_block()
             self.attempt = True
             code = self.prep_exec(block)
@@ -2155,7 +2149,7 @@ class VEY:
                 for letter in error_name:
                     if letter != " ":
                         new_name.append(letter)
-                self.attempt = False # so the errors and messages out of attempt block will work
+                self.attempt = False # so the errors and messages out of try block will work
                 error_name = "".join(new_name)
                 block, count, eogc = self.get_block()
                 if error_name in self.Errors.keys():
@@ -2679,7 +2673,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            try:
+            if True:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3020,13 +3014,19 @@ class VEY:
                 # handles classes
                 elif main.startswith(tuple(self.classes.keys())):
                     name = None
+                    original = main
                     main = main.split("(", 1)[0].strip()
                     for i in self.classes.keys():
                         if i == main:
                             name = i
+                    main = original
                     if name is None:
                         self.error(6, right)
-                    self.objects[left] = {"variables": {}, "instance": name, "inherits": self.classes[name]["inherits"]}
+                    self.objects[left] = {
+                        "variables": {k: copy.deepcopy(v) for k, v in self.classes[name]["variables"].items()},
+                        "instance": name,
+                        "inherits": self.classes[name]["inherits"]
+                    }
                     const_name = syntax_encloser.MethodSSE.name_for("constructor")
                     if "(" in main and ")" in main and const_name in list(self.classes[name]["methods"].keys()):
                         args = main[:-1].split("(", 1)
@@ -3036,7 +3036,7 @@ class VEY:
                         args = args[1].split(',')
                         args = [self.convert_arg(arg.strip()) for arg in args]
                         self.classes[name]["methods"][const_name]["end"] = self.cnt
-                        self.run_methods(name, m_name, None, None, args, False, obj_name=left)
+                        self.run_methods(name, m_name, True, left, args, False, obj_name=left),
                     self.class_callers[left] = name
                     self.variables[left] = name
                     ogl = left
@@ -3069,6 +3069,7 @@ class VEY:
                     if d1.strip().isdigit() and d2.strip().isdigit():
                         self.variables[left] = self.eval(main, {}, self.variables)
                         return
+                    
                     if any(right.strip().startswith(self.library_name[l] + ".") and l in self.library for l in self.nplibs.keys()):
                         struct = right.split(".", 1)
                         key = self.name_library[struct[0]]
@@ -3097,17 +3098,16 @@ class VEY:
                     3rd Layer of parsing, which is evaluation, all assignments are
                     """
                     self.variables[left] = self.eval(main, {}, self.variables)
-            except Exception as e:
-                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-                if isinstance(e, ZeroDivisionError):
-                    self.error(4)
-                    return None
-                if isinstance(e, MemoryError):
-                    self.error(7)
-                    return
-                self.error(6, right)
-                print(e)
-                return None
+#            except Exception as e:
+#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+#                if isinstance(e, ZeroDivisionError):
+#                    self.error(4)
+#                    return None
+#                if isinstance(e, MemoryError):
+#                    self.error(7)
+#                    return
+#                self.error(6, right)
+#                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
@@ -3516,7 +3516,7 @@ class VEY:
                     new_content += part  # Append the literal text
             return new_content
         else:
-            if True:
+            try:
                 if any(a in content for a in list(self.variables.keys())) and self.in_class[1]:
                     c = content.split(".")
                     if len(c) > 1:
@@ -3541,9 +3541,9 @@ class VEY:
                     v = t
                     
                 return v
-#            except Exception as e:
-#                self.error(46, content)
-#                return
+            except Exception as e:
+                self.error(46, content)
+                return
 
     def handle_class(self, line):
         insts = line[5:].strip()
@@ -3574,8 +3574,8 @@ class VEY:
                     self.classes[insts]["variables"]["<attr>"].extend(list(parent_const["methods"].keys()))
                     self.classes[insts]["variables"]["<attr>"].extend(list(parent_const["variables"].keys()))
                         
-        # statics
-        self.special[insts] = {"variables": {}, "methods": {}, "access": False} # this stores static variable and method names here
+                        
+        self.special[insts] = {"variables": {}, "methods": {}, "access": False} # this stores class variable and method names here
             
         ogc = self.og_c
         block, count, eogc = self.get_block()
@@ -3583,7 +3583,6 @@ class VEY:
         self.Instructions = block
         og_cnt = count
         self.cnt = 0
-        #{'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc}
         while self.cnt < len(block):
             if block[self.cnt].endswith("{") and block[self.cnt].startswith("{"):
                 block[self.cnt] = block[self.cnt][:-1]
@@ -3805,16 +3804,4 @@ class VEY:
         
         sse.parse()
         
-        
-        
-# This comment right here is only used to copy, i uncomment the lines and copy them to place somewhere in the code later
-
-#if not self.attempt:
-#    print("\033[31mTraceback(most_recent_call_back):\033[0m")
-#    for i in self.traceback:
-#        print(f"    TB - [ File `<{self.path / Path(self.file_name).with_suffix(self.file_extension)}>` line: {self.traceback[i]}, in {i} ],")
-#    print(f"    TB - [ File `<{self.path / Path(self.file_name).with_suffix(self.file_extension)}>` TB found > line [{self.og_c}]: {self.Instructions[self.cnt]} in {i} ]")
-#    print(f"\nError: ")
-#    self.Errors["Error"] = True
-#    return None
         
