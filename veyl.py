@@ -14,6 +14,7 @@ if "VeylPL" not in system.path:
     from built_in_libraries import libraries
     from error import handle
     import syntax_encloser
+    import resolve_external
 
 _ASSIGN_FASTPATH_EXCLUDE = (
     '/<', 'output', 'ignore', 'quit()', 'inherit ', '<debug>',
@@ -159,14 +160,219 @@ class SafeEval(ast.NodeVisitor):
         else:
             raise ValueError(f"Unsupported operation: {ast.dump(node)} line {line}")
 
+class Vector:
+    """
+    Dynamic, homogeneous sequence.
+
+    Veyl:
+        vector int * nums = [1, 2, 3]
+
+    - Size can change
+    - Every element must have the same datatype
+    """
+
+    def __init__(self, datatype: type, values=None):
+        self.datatype = datatype
+        self._data = []
+
+        if values is not None:
+            for value in values:
+                self._check_type(value)
+                self._data.append(value)
+
+    def _check_type(self, value):
+        if self.datatype is ANY:
+            return
+        if not isinstance(value, self.datatype):
+            raise TypeError(
+                f"Vector expects `{self.datatype.__name__}`, "
+                f"but got `{type(value).__name__}`"
+            )
+
+    def append(self, value):
+        self._check_type(value)
+        self._data.append(value)
+
+    def insert(self, index, value):
+        self._check_type(value)
+        self._data.insert(index, value)
+
+    def pop(self, index=-1):
+        return self._data.pop(index)
+
+    def remove(self, value):
+        self._data.remove(value)
+
+    def clear(self):
+        self._data.clear()
+
+    def __getitem__(self, index):
+        return self._data[index]
+
+    def __setitem__(self, index, value):
+        self._check_type(value)
+        self._data[index] = value
+
+    def __delitem__(self, index):
+        del self._data[index]
+
+    def __len__(self):
+        return len(self._data)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __contains__(self, value):
+        return value in self._data
+
+    def __repr__(self):
+        return repr(self._data)
+
+    def __str__(self):
+        return str(self._data)
+    
+    def __type__(self):
+        return 'vector'
+
+class Array:
+    """
+    Fixed-size, homogeneous sequence.
+
+    Veyl:
+        array int * nums = [1, 2, 3]
+
+    - Size cannot change
+    - Elements can change
+    - Every element must have the same datatype
+    """
+
+    def __init__(self, datatype: type, values):
+        self.datatype = datatype
+        self._data = list(values)
+
+        for value in self._data:
+            self._check_type(value)
+
+    def _check_type(self, value):
+        if self.datatype is ANY:
+            return
+        if not isinstance(value, self.datatype):
+            raise TypeError(
+                f"Array expects `{self.datatype.__name__}`, "
+                f"but got `{type(value).__name__}`"
+            )
+
+    def __getitem__(self, index):
+        return self._data[index]
+
+    def __setitem__(self, index, value):
+        self._check_type(value)
+        self._data[index] = value
+
+    def __len__(self):
+        return len(self._data)
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __contains__(self, value):
+        return value in self._data
+
+    def __repr__(self):
+        return repr(self._data)
+
+    def __str__(self):
+        return str(self._data)
+    
+    def __type__(self):
+        return 'array'
+
+class HashMap:
+    """
+    Fixed-size typed hash map.
+    keys and values have an assigned datatype
+
+    Veyl:
+        map <key: str, value: int> score = {"a": 50, "b": 75, "c": 90}
+        
+    Keys cannot be added or removed.
+    Values can be changed, but must preserve their datatype.
+    """
+
+    def __init__(self, key_type, value_type, values=None):
+        self.key_type = key_type
+        self.value_type = value_type
+        self._data = {}
+
+        if values is not None:
+            for key, value in values.items():
+                self[key] = value
+
+    def _check_key(self, key):
+        if self.key_type is ANY:
+            return
+        if not isinstance(key, self.key_type):
+            raise TypeError(
+                f"hash map key must be {self.key_type.__name__}, "
+                f"got {type(key).__name__}"
+            )
+    
+    def _check_value(self, value):
+        if self.value_type is ANY:
+            return
+        if not isinstance(value, self.value_type):
+            raise TypeError(
+                f"hash map value must be {self.value_type.__name__}, "
+                f"got {type(value).__name__}"
+            )
+    
+    def __setitem__(self, key, value):
+        self._check_key(key)
+        self._check_value(value)
+        self._data[key] = value
+
+    def __getitem__(self, key):
+        self._check_key(key)
+        return self._data[key]
+
+    def __iter__(self):
+        return iter(self._data)
+
+    def __contains__(self, key):
+        return key in self._data
+
+    def __len__(self):
+        return len(self._data)
+
+    def keys(self):
+        return self._data.keys()
+
+    def values(self):
+        return self._data.values()
+
+    def items(self):
+        return self._data.items()
+
+    def __repr__(self):
+        return repr(self._data)
+
+    def __str__(self):
+        return str(self._data)
+    
+    def __type__(self):
+        return 'hash map'
+
+class ANY:
+    pass # this just marks the datatype for <any> SSE
+
 class VEY:
-    def __init__(self, instructions, special_library={}, force_raise=False, path=None, file="module", extension=".vey"):
+    def __init__(self, instructions, special_library={}, force_raise=False, path=None, file="module", extension=".vey", config=None, isexternal=False):
         # nplibs holds dictionaries like this
         # "lib_name": module_class,
         # where module_class is the class object of that library
         
         # CONFIGURATIONS
-        self.version = "1.0.6" # current version
+        self.version = "1.0.7" # current version
         
         self.path = Path.cwd() if path is None else path # current program directory
         self.file_name = file # name of file
@@ -209,7 +415,21 @@ class VEY:
             "unconst",
         ] # this one is for methods
         self.forbiden_chars = [" ", "'", '"', "(", ")", "[", "]", "{", "}", "~", "`", "@", "*", "+", "<", ">", "%", "#", "!", "?", ",", ":", ";", "/"] # characters forbiden to non string names
-        self.datatypes = ["int", "str", "float", "bool", "vector", "array", "map", "set", "void"] # use for keywords
+        self.datatypes = ["<any>", "int", "str", "float", "bool", "list", "tuple", "vector", "array", "map", "set", "frozenset", "void"] # use for keywords
+        self.dt_conversion = {
+            "int": int,
+            "str": str,
+            "float": float,
+            "bool": bool,
+            "list": list,
+            "tuple": tuple,
+            "vector": Vector,
+            "array": Array,
+            "map": HashMap,
+            "set": set,
+            "frozenset": frozenset,
+            "<any>": ANY
+        }
         
         # IDENTIFIERS
         self.current_func = "" # current function
@@ -277,6 +497,15 @@ class VEY:
             
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
+        
+        # EXTRNAL CHANGES
+        self.external = {} # place holder
+        self.external_call = {} # placeholder for holding callable objects
+        self.is_external = isexternal
+        self.external_config = config
+        if isexternal:
+            resolve = resolve_external.resolve(self, config)
+            self.__dict__ = resolve.start().__dict__
         
         
     def build_instructions(self, source):
@@ -398,6 +627,24 @@ class VEY:
     
     def eval(self, expression, globals={}, locals=None, arb=True, from_lib=False, from_exp=False, from_isinstance=False):
         self.evals = True # a flag to tell the parser that is just evaluating
+        # externally injected built-ins (see resolve_external.py / the
+        # `external` config class): a call to one of these names is
+        # dispatched straight to the bound python callable/class, the same
+        # way a native built in like `length(...)` would resolve, before
+        # anything else touches the expression.
+        if self.external_call:
+            stripped = expression.strip()
+            if "(" in stripped and stripped.endswith(")"):
+                call_name = stripped.split("(", 1)[0].strip()
+                if call_name in self.external_call:
+                    raw_args = stripped[len(call_name) + 1:-1].strip()
+                    if raw_args == "":
+                        arg_values = []
+                    else:
+                        arg_exprs = self.special_split(raw_args, ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
+                        arg_values = [self.eval(a.strip(), globals, locals) for a in arg_exprs]
+                    self.evals = False
+                    return self.external_call[call_name](*arg_values)
         # this eval has the ability to not just evaluate 1 expression, but multiple expressions, the language arbitrary codes, and more
         """Process of how eval handles an expression like
         variable = sum(var1) / length(var1) + var2 + mean(var3)
@@ -1049,7 +1296,7 @@ class VEY:
         for i in globals:
             self.original_var[-1][i] = self.variables[i]
     
-    def datatype_convert(self, value, types, fromwho=""):
+    def datatype_convert(self, value, types, token=None):
         try:
             if types == "int":
                 return int(value)
@@ -1057,16 +1304,20 @@ class VEY:
                 return str(value)
             elif types == "float":
                 return float(value)
-            elif types == "array":
+            elif types == "tuple":
                 return tuple(value)
-            elif types == "vector":
+            elif types == "list":
                 return list(value)
             elif types == "map":
                 return dict(value)
             elif types == "set":
                 return set(value)
+            elif types == "frozenset":
+                return frozenset(value)
             elif types == "void":
                 return None
+            elif types == "<any>":
+                return ANY
         except ValueError:
             if types == "int":
                 self.error(105, types, value)
@@ -1074,7 +1325,18 @@ class VEY:
             self.error(106, types, value)
         except TypeError:
             self.error(107, types, value)
-        return None
+        # for types like array, vector, hash map
+        if token is None:
+            return None
+        if types == "array":
+            return Array(self.dt_conversion[token], list(value))
+        elif types == "vector":
+            return Vector(self.dt_conversion[token], list(value))
+        elif types == "hashmap":
+            tk = token
+            key = self.dt_conversion[tk[0].strip()]
+            val = self.dt_conversion[tk[1].strip()]
+            return HashMap(key, val, dict(value))
             
     def types(self, value, mode="p"):
         if mode == "p":
@@ -1548,8 +1810,8 @@ class VEY:
         var = self.variables[name]
         addr = self.eval(addr, {}, self.variables)
         value = self.eval(value, {}, self.variables)
-        if isinstance(var, (list, dict)):
-            if isinstance(var, dict):
+        if isinstance(var, (list, dict, HashMap, Vector, Array)):
+            if isinstance(var, (dict, HashMap)):
                 self.variables[name][addr] = value
             elif int(addr) > len(var) or int(addr) is None:
                 self.error(14, name, len(var), len(addr))
@@ -1585,13 +1847,16 @@ class VEY:
                 self.error(15, name, type(value))
             return
     
-    def datatype_keyword(self, instruction, acc="pub"):
-        line = instruction.split(" ", 1)
-        data_type = line[0].strip()
-        instruction = line[1].strip()
+    def datatype_keyword(self, instruction, acc="pub", dt=None, token=None, ismap=False):
+        if dt in ["array", "vector", "map"]:
+            data_type = dt
+        else:
+            line = instruction.split(" ", 1)
+            data_type = line[0].strip()
+            instruction = line[1].strip()
         if self.special_find(instruction, "=", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
             name = instruction.split("=", 1)[0].strip()
-            self.assign_variable(instruction, dt=data_type)
+            self.assign_variable(instruction, dt=data_type, token=token, ismap=ismap)
             if acc == "pub" and self.in_class[1]:
                 self.special[self.in_class[0]]["variables"][name] = True
                 self.process_vars()
@@ -2079,6 +2344,7 @@ class VEY:
                 self.special[name]["access"] = False
                 
         elif instruction.startswith("public") or instruction.startswith("private"):
+            # visibility control for functions, class methods, and variables
             types = ""
             if instruction.startswith("public"):
                 instruction = instruction[7:].strip()
@@ -2122,7 +2388,6 @@ class VEY:
             
             elif instruction.startswith('func '):
                 # user define function
-                # example: `func main(arg1, arg2):`
                 self.function_creation(instruction, types)
             elif instruction.startswith(tuple(self.datatypes)):
                 self.datatype_keyword(instruction, types)
@@ -2377,7 +2642,7 @@ class VEY:
                 
         elif instruction.startswith("sync"):
             # syncronizes variables
-            # sync mode host_var with *group_varA and group_varB
+            # sync mode host_var with *group_varA, group_varB
             args = instruction[4:].strip()
             parts = args.split(" with ", 1)
             args = parts[0].strip().split(" ")
@@ -2388,7 +2653,7 @@ class VEY:
                 self.error(32, host)
                 return None
                 
-            groups = parts[1].strip().split(" and ") # stays as a list of variable names
+            groups = [a.strip() for a in parts[1].strip().split(",")] # stays as a list of variable names
             # group variables can both be existing variables and non existing, if it doesn't exist, it will create a new one
             # immidietly assigning the variable with the hosts, depending what mode async is on, but immidietly as "None"
             variables = {}
@@ -2490,7 +2755,38 @@ class VEY:
             self.process_vars()
         
         elif any(instruction.startswith(dtype + " ") for dtype in self.datatypes):
-            self.datatype_keyword(instruction)
+            args = instruction.split(" ", 1)
+            datatype = args[0].strip()
+            keyword = args[1].strip()
+            token = None
+            ismap = False
+            if datatype in ["array", "vector", "map"]:
+                # array and vector would always have * to mark their element type,
+                # map would either have an < > encloser with key and value types,
+                # if there isn't any < > encloser, map defaults to dict
+                # renames to hashmap
+                if datatype == "map":
+                    # map <key: type, value: type> name = ...
+                    # can be hybrid depending on datatype of value
+                    # map <key: type, value: vector int *
+                    
+                    ismap = True
+                    keyword = keyword.split(">", 1)
+                    instruction = keyword[1].strip()
+                    if keyword[0].startswith("<"):
+                        tk = keyword[0][1:].strip().split(",")
+                        # should look like a plain key: type, value: type, split by commas
+                        key = tk[0].strip().split(":", 1)[1].strip()
+                        value = tk[1].strip().split(":", 1)[1].strip()
+                        token = [key, value]
+                else:
+                    # arrays and vectors are initiated in the same way
+                    # vector type * name = ...
+                    # finds type for * and name
+                    tk = keyword.split(" * ", 1)
+                    token = tk[0].strip()
+                    instruction = tk[1].strip()
+            self.datatype_keyword(instruction, dt=datatype, token=token, ismap=ismap)
             self.process_vars()
             
         elif '=' in instruction:
@@ -2504,7 +2800,7 @@ class VEY:
             while cnt < len(func):
                 if func[cnt].startswith('push(') and func[cnt].endswith(')'):
                     args = func[cnt][5:-1]
-                    if not isinstance(self.variables[name], list):
+                    if not isinstance(self.variables[name], (list, Vector)):
                         self.error(50)
                         return None
                     else:
@@ -2618,7 +2914,7 @@ class VEY:
             self.error(1, instruction)
             return None
             
-    def assign_variable(self, instruction, run_method=False, dt="<any>", constant=False):
+    def assign_variable(self, instruction, run_method=False, dt="<any>", constant=False, token=None, ismap=False):
         """
         Main Level 2 of parsing
         where variable assignments are handled
@@ -3124,7 +3420,9 @@ class VEY:
         elif self.constants[left][0] and self.constants[left][1] != None and left in self.variables.keys():
             self.constants[left][0] = False
         if dt != "<any>":
-            self.variables[left] = self.datatype_convert(self.variables[left], dt)
+            if ismap:
+                dt = "hashmap"
+            self.variables[left] = self.datatype_convert(self.variables[left], dt, token=token)
             self.variable_info[left]["datatype"] = "Nonetype" if dt == "void" else dt
         if ismethod:
             self.methods(left, right) # next is methods
