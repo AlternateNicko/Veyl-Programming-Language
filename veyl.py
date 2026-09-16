@@ -3343,7 +3343,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            if True:
+            try:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3776,16 +3776,16 @@ class VEY:
                         for var, val in zip(left, value):
                             self.variables[var] = val
                     else: self.variables[left] = value
-#            except Exception as e:
-#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-#                if isinstance(e, ZeroDivisionError):
-#                    self.error(4)
-#                    return None
-#                if isinstance(e, MemoryError):
-#                    self.error(7)
-#                    return
-#                self.error(6, right)
-#                return None
+            except Exception as e:
+                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                if isinstance(e, ZeroDivisionError):
+                    self.error(4)
+                    return None
+                if isinstance(e, MemoryError):
+                    self.error(7)
+                    return
+                self.error(6, right)
+                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
