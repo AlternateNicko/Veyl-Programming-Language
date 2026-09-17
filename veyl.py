@@ -14,30 +14,22 @@ if "VeylPL" not in system.path:
     libraries = None
     try:
         from built_in_libraries import libraries
-        print("Built in libraries has been imported")
     except ImportError as e:
-        if libraries is not None:
-            print("Built in libraries has been imported")
         pass
     try:
         from error import handle
-        print("Error has been imported")
     except ImportError as e:
         pass
     try:
         import syntax_encloser
-        print("SSE has been imported")
     except ImportError as e:
         pass
     try:
         import resolve_external
-        print("External resolution has been imported")
     except ImportError as e:
         pass
     try:
         import veylIO
-        print("Veyl IO program has been imported")
-        print("Succesfully imported all py-dependency modules")
     except ImportError as e:
         pass
 
