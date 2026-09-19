@@ -2160,8 +2160,8 @@ class VEY:
         elif instruction.startswith('pass'):
             return # passes instructions, usefull for placeholders
         
-        elif instruction.startswith(tuple(self.pbi) + "("):
-            self.plain_builtins(instruction)
+        elif (instruction + "(").startswith(tuple(self.pbi)):
+            return self.plain_builtins(instruction)
         
         elif instruction.startswith('inherit ') and self.in_class[1]:
             """
