@@ -25,10 +25,6 @@ if "VeylPL" not in system.path:
     except ImportError as e:
         pass
     try:
-        import resolve_external
-    except ImportError() as e:
-        pass
-    try:
         import veylIO
     except ImportError as e:
         pass
@@ -461,8 +457,7 @@ class VEY:
         instructions, special_library={},
         force_raise=False, path=None,
         file="module", extension=".vey",
-        config=None, isexternal=False,
-        io=True, cli_config=None
+        io=True
         ):
         # nplibs holds dictionaries like this
         # "lib_name": module_class,
@@ -477,7 +472,6 @@ class VEY:
             "level": "final",
             "serial": 0
         }
-        self.cli_version = "0.9.0"
         self.required_py_version = ">=3.8.0"
         self.program_version = "1.0.0" # your programs choice
         
@@ -514,9 +508,6 @@ class VEY:
         self.og_c = 0 # the count, but the count where the pointer is pointingj at, and not changed by any parsing actions
         self.return_val = None # return value
         self.return_type = None # return type
-        self.output = {
-            "<main>": [], # used for cache
-        }
         
         # EVALUATIONS / CONSTANTS
         self.bif = ["num", "input", "eval", "exec", "length", "sort", "min", "mean", "max", "median", "mode", "sum", "range", "call", "reverse", "type", "format",
@@ -611,17 +602,6 @@ class VEY:
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
         
-        # EXTRNAL CHANGES
-        if isinstance(cli_config, dict):
-            for c in cli_config.keys():
-                self.variables[c] = cli_config[c]
-        self.external = {} # place holder
-        self.external_call = {} # placeholder for holding callable objects
-        self.is_external = isexternal
-        self.external_config = config
-        if isexternal:
-            resolve = resolve_external.resolve(self, config)
-            self.__dict__ = resolve.start().__dict__
         
         
     def build_instructions(self, source):
