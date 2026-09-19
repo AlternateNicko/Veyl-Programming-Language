@@ -1,12 +1,12 @@
 ![Static Badge](https://img.shields.io/badge/Veyl--Programming--Language-text)
-![GitHub Release](https://img.shields.io/github/v/release/AlternateNicko/Veyl--Programming--Language)
-![GitHub Created At](https://img.shields.io/github/created-at/AlternateNicko/Veyl--Programming--Language)
-![GitHub commits since latest release](https://img.shields.io/github/commits-since/AlternateNicko/Veyl--Programming--Language/latest)
-![GitHub last commit](https://img.shields.io/github/last-commit/AlternateNicko/Veyl--Programming--Language)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/AlternateNicko/Veyl--Programming--Language/total)
-![GitHub top language](https://img.shields.io/github/languages/top/AlternateNicko/Veyl--Programming--Language)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/AlternateNicko/Veyl--Programming--Language)
-![GitHub Release Date](https://img.shields.io/github/release-date/AlternateNicko/Veyl--Programming--Language)
+![GitHub Release](https://img.shields.io/github/v/release/AlternateNicko/Veyl-Programming-Language)
+![GitHub Created At](https://img.shields.io/github/created-at/AlternateNicko/Veyl-Programming-Language)
+![GitHub commits since latest release](https://img.shields.io/github/commits-since/AlternateNicko/Veyl-Programming-Language/latest)
+![GitHub last commit](https://img.shields.io/github/last-commit/AlternateNicko/Veyl-Programming-Language)
+![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/AlternateNicko/Veyl-Programming-Language/total)
+![GitHub top language](https://img.shields.io/github/languages/top/AlternateNicko/Veyl-Programming-Language)
+![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/AlternateNicko/Veyl-Programming-Language)
+![GitHub Release Date](https://img.shields.io/github/release-date/AlternateNicko/Veyl-Programming-Language)
 ___
 # About
 ___
