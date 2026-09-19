@@ -25,10 +25,6 @@ if "VeylPL" not in system.path:
     except ImportError as e:
         pass
     try:
-        import resolve_external
-    except ImportError as e:
-        pass
-    try:
         import veylIO
     except ImportError as e:
         pass
@@ -383,12 +379,84 @@ class ANY:
     pass # this just marks the datatype for <any> SSE
 
 class VEY:
+    """
+    Veyl Programming Language
+    VEY is the entry class for the entire interpreter, it holds
+    the tokenizer, parser, evaluators, helper functions for easier tokenization, and its built ins.
+    Veyl is an expiremental language (Under development and should be used only for simple applications)
+    You may still experience bug, but expect there to be bugs as handling programs like these are hard to manage.
+    INSTANTIATING EXAMPLE:
+        from veyl import VEY
+        
+        instruction = r"output('Hello, World')"
+        vey = VEY()
+        vey.execute() # Execution starts
+        
+    MAIN SYNTAX:
+        - Code blocks are defined with curly brackets { }
+        example:
+            [keyword] {
+                ...
+            }
+            [keyword] 
+            {
+                ...
+            }
+        - Comments are defined with /< and docstrings/multilined comments are defined
+        - Variables can be defined with either no assigned datatype (defaults to any), or with an a datatype
+        example:
+            variable = "Hello"
+                defaults to string
+            variable = 10
+                defaults to int
+            int variable = 100
+            str variables = "Hello, world!"
+            list variables = [1, 2, 3]
+        - White spaces are ignored
+    Keywords:
+        - pass
+        - if ([condition])
+            { body }
+        - else if ([condition])
+            { body }
+        - while ([condition])
+            { body }
+        - for [variables] in [iterable]
+            { body }
+        - public [optional: datatype] func [name]([parameter])
+            { body }
+            can be used either in a class (affects if it's either a class method)
+            or can be used in normal function definitions (affects scope vision to anywhere in the program, including the program as modular imports)
+        - private [optional: datatype] func [name]([parameter])
+            { body }
+            can be used either in a class (affects that it is not a class method but only accessible inside the class)
+            or can be used in normal function definitions (affects scope vision limited to the current scope and before it, including the program as modular imports, which it would be unidentified in the program)
+        - class [name]([optional: inherit_class])
+            { body }
+        - try
+            { body }
+        - except [Error name]
+            { body }
+        - inherit [method_name][parameters] from [inherit_class]
+        - load [iter_variable][key_or_index] = [value]
+        - break
+        - continue
+        - import [module]
+        - import [module] get [name]
+        - sync [host] [mode] with [variables]
+        - desync [variable] from [host]
+        - delete [variable][optional: key_or_index]
+        - rename [name] as [new_name]
+        - throw [Error name] ([output])
+        - const [name] = value
+        - new [name] = value
+        - open [file] [mode] as [name]
+    
+    """
     def __init__(self,
         instructions, special_library={},
         force_raise=False, path=None,
         file="module", extension=".vey",
-        config=None, isexternal=False,
-        io=True, cli_config=None
         ):
         # nplibs holds dictionaries like this
         # "lib_name": module_class,
@@ -403,7 +471,6 @@ class VEY:
             "level": "final",
             "serial": 0
         }
-        self.cli_version = "0.9.0"
         self.required_py_version = ">=3.8.0"
         self.program_version = "1.0.0" # your programs choice
         
@@ -443,11 +510,13 @@ class VEY:
         
         # EVALUATIONS / CONSTANTS
         self.bif = ["num", "input", "eval", "exec", "length", "sort", "min", "mean", "max", "median", "mode", "sum", "range", "call", "reverse", "type", "format",
-            "zip", "dict", "map"
+            "zip", "dict", "map", "isinstance", "check"
         ] # for eval to: know if the expression they are evaluating has the languages codes
         self.bim = ["cap", "low", "as", "rem", "strip", "split", "hasprefix", "hassuffix", "replace", "slice", "pop", "push", "read", "keys", "values", "items", "const",
-            "unconst",
+            "variable", "immutable", "mutable", "swap_case"
         ] # this one is for methods
+        self.pbi = ["output", "quit", "exec"
+        ] # this one is for plain built in functions
         self.forbiden_chars = [" ", "'", '"', "(", ")", "[", "]", "{", "}", "~", "`", "@", "*", "+", "<", ">", "%", "#", "!", "?", ",", ":", ";", "/"] # characters forbiden to non string names
         self.datatypes = ["<any>", "int", "str", "float", "bool", "list", "tuple", "vector", "array", "map", "set", "frozenset", "void"] # use for keywords
         self.dt_conversion = {
@@ -532,17 +601,6 @@ class VEY:
             'QuitError': False # Use for quit(), doesn't throw an error message, but does stop the program without directly ending the main python program
         }
         
-        # EXTRNAL CHANGES
-        if isinstance(cli_config, dict):
-            for c in cli_config.keys():
-                self.variables[c] = cli_config[c]
-        self.external = {} # place holder
-        self.external_call = {} # placeholder for holding callable objects
-        self.is_external = isexternal
-        self.external_config = config
-        if isexternal:
-            resolve = resolve_external.resolve(self, config)
-            self.__dict__ = resolve.start().__dict__
         
         
     def build_instructions(self, source):
@@ -853,12 +911,12 @@ class VEY:
                         expression = str(expression)
                         del self.variables["<<temporary_variable>>"]
         expression = str(expression)
-        if True:
+        try:
             tree = ast.parse(expression.strip(), mode="eval")
-#        except Exception as e:
-#            if "[]" in expression:
-#                self.error(74, expression)
-#                return
+        except Exception as e:
+            if "[]" in expression:
+                self.error(74, expression)
+                return
         self.evals = False
         evaluator = SafeEval(globals, locals)
         if from_lib: self.variables = past_vars
@@ -2095,23 +2153,14 @@ class VEY:
             return
             
         elif instruction.startswith('/<'): pass # programming language's comment syntax
-        
-        elif instruction.startswith('output'):
-            # not a keyword, but a function that outputs values
-            stdout = self.handle_output(instruction)
-            # MAIN PROGRAM STRING MUST BE A RAW STRING FOR THIS
-            if "\\" in str(stdout): # processes backslashes
-                stdout = stdout.encode().decode("unicode_escape")
-            return stdout
-            
+
         elif instruction.startswith(('{', '}')): pass # because it may be a peice of a code block
                     
         elif instruction.startswith('pass'):
             return # passes instructions, usefull for placeholders
-            
-        elif instruction.startswith('quit()'):
-            self.Errors["QuitError"] = True # a hidden error just to stop the program without affecting the main python program
-            return
+        
+        elif instruction.startswith(tuple(self.pbi) + "("):
+            self.plain_builtins(instruction)
         
         elif instruction.startswith('inherit ') and self.in_class[1]:
             """
@@ -3174,25 +3223,25 @@ class VEY:
                         result[0] = result[0].strip()
                         if result[0].startswith("$<<"):
                             self.project_sse(result[0], types="library")
-#                        if result[0] == "$<<SELF EVAL>>":
-#                            self.eval_deb = not self.eval_deb
-#                        elif result[0] == "$<<DEBUGGED>>":
-#                            wait_time = result[1] if len(result) > 1 else 0
-#                            if self.debug:
-#                                self.debug = False
-#                            else:
-#                                self.adv_debug = False
-#                                self.debug = True
-#                                self.debug_wait = wait_time
-#                        elif result[0] == "$<<ADV_DEBUGGED>>":
-#                            
-#                            wait_time = result[1] if len(result) > 1 else 0
-#                            if self.adv_debug:
-#                                self.adv_debug = False
-#                            else:
-#                                self.debug = False
-#                                self.adv_debug = True
-#                                self.adv_debug_wait = wait_time
+                        if result[0] == "$<<SELF EVAL>>":
+                            self.eval_deb = not self.eval_deb
+                        elif result[0] == "$<<DEBUGGED>>":
+                            wait_time = result[1] if len(result) > 1 else 0
+                            if self.debug:
+                                self.debug = False
+                            else:
+                                self.adv_debug = False
+                                self.debug = True
+                                self.debug_wait = wait_time
+                        elif result[0] == "$<<ADV_DEBUGGED>>":
+                            
+                            wait_time = result[1] if len(result) > 1 else 0
+                            if self.adv_debug:
+                                self.adv_debug = False
+                            else:
+                                self.debug = False
+                                self.adv_debug = True
+                                self.adv_debug_wait = wait_time
                 if "$<<new_path>>" in self.variables.keys():
                     self.path = self.variables["$<<new_path>>"]
                     del self.variables["$<<new_path>>"]
@@ -3348,11 +3397,15 @@ class VEY:
                         self.variables[left] = self.objects[main]["variables"][attribute]
                     return
                     
-                elif main.startswith('num(') and main.endswith(')'):
+                elif not main.endswith(")"):
+                    self.error(109)
+                    return
+                    
+                elif main.startswith('num('):
                     self.handle_num_function(left, main)
                     return
                     
-                elif main.startswith('input(') and main.endswith(')'):
+                elif main.startswith('input('):
                     output = main.split('(', 1)
                     content = str(output[1][:-1])
                     if content.startswith('"') and content.endswith('"') or content.endswith("'") and content.startswith("'"):
@@ -3368,7 +3421,7 @@ class VEY:
                     self.variables[left] = str(value)
                     return
                     
-                elif main.startswith('length(') and main.endswith(')'):
+                elif main.startswith('length('):
                     arg = main[7:-1]
                     try:
                         value = self.eval(arg.strip(), {}, self.variables)
@@ -3377,10 +3430,10 @@ class VEY:
                     if value or value in [[], (), {}]:
                         self.variables[left] = len(value)
                     return
-                elif main.startswith('range(') and main.endswith(')'):
+                elif main.startswith('range('):
                     self.variables[left] = self.ran(main)
                     return    
-                elif main.startswith('format(') and main.endswith(")"):
+                elif main.startswith('format('):
                     content = main[7:-1].strip()
                     if content.startswith('"') and content.endswith('"') or content.startswith("'") and content.endswith("'"):
                         content = content[1:-1]
@@ -3396,7 +3449,7 @@ class VEY:
                             new_content += part  # Append the literal text
                     self.variables[left] = new_content
                     return
-                elif main.startswith('eval(') and main.endswith(')'):
+                elif main.startswith('eval('):
                     arg = self.special_split(main[5:-1], ",", ("'", '"', "(", "{", "["), ('"', "'", ")", "]", "}"))
                     try:
                         if len(arg) > 1:
@@ -3517,7 +3570,7 @@ class VEY:
                         self.special[name]["access"] = False
                     
                     return
-                elif main.startswith('sort(') and main.endswith(')'):
+                elif main.startswith('sort('):
                     arg = main[5:-1].split(',')
                     reverse = self.eval(arg[1].strip(), {}, self.variables) if len(arg) == 2 else False
                     if not isinstance(reverse, bool):
@@ -3540,7 +3593,7 @@ class VEY:
                             self.error(40)
                             return
                     return
-                elif main.startswith("mean(") and main.endswith(")"):
+                elif main.startswith("mean("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
                     if not isinstance(arg, list):
                         self.error(41, arg)
@@ -3548,7 +3601,7 @@ class VEY:
                     val = sum(arg)
                     self.variables[left] = val / len(arg)
                     return
-                elif main.startswith("median(") and main.endswith(")"):
+                elif main.startswith("median("):
                     arg = self.eval(main[7:-1].strip(), {}, self.variables)
                     if not isinstance(arg, list):
                         self.error(41, arg)
@@ -3564,7 +3617,7 @@ class VEY:
                         mid = int(length)
                         self.variables[left] = float(lists[mid])
                     return
-                elif main.startswith("mode(") and main.endswith(")"):
+                elif main.startswith("mode("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
                     if not isinstance(arg, list):
                         self.error(41, arg)
@@ -3581,14 +3634,14 @@ class VEY:
                             
                     self.variables[left] = highest
                     return
-                elif main.startswith("sum(") and main.endswith(")"):
+                elif main.startswith("sum("):
                     arg = self.eval(main[4:-1].strip(), {}, self.variables)
                     if not isinstance(arg, list):
                         self.error(41, arg)
                         return None
                     self.variables[left] = sum(arg)
                     return
-                elif main.startswith("max(") and main.endswith(")"):
+                elif main.startswith("max("):
                     arg = main[4:-1].strip().split(",", 1)
                     value = self.eval(arg[0], {}, self.variables)
                     if len(arg) == 2:
@@ -3596,7 +3649,7 @@ class VEY:
                     else:
                         self.variables[left] = max(value)
                     return
-                elif main.startswith("min(") and main.endswith(")"):
+                elif main.startswith("min("):
                     arg = main[4:-1].strip().split(",", 1)
                     value = self.eval(arg[0].strip(), {}, self.variables)
                     if len(arg) == 2:
@@ -3605,13 +3658,13 @@ class VEY:
                         self.variables[left] = min(value)
                     return
                 
-                elif main.startswith("reverse(") and main.endswith(")"):
+                elif main.startswith("reverse("):
                     arg = main[8:-1].strip()
                     value = self.eval(arg, {}, self.variables)
                     self.variables[left] = value[::-1]
                     return
                 
-                elif main.startswith("type(") and main.endswith(")"):
+                elif main.startswith("type("):
                     arg = main[5:-1].strip().split(",", 1)
                     value = self.eval(arg[0].strip(), {}, self.variables)
                     if len(arg) == 2:
@@ -3621,14 +3674,14 @@ class VEY:
                         return
                     self.variables[left] = self.types(value, mode)
                     return
-                elif main.startswith("zip(") and main.endswith(")"):
+                elif main.startswith("zip("):
                     arg = self.special_split(main[4:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                     new_list = []
                     for value in arg:
                         new_list.append(self.eval(value.strip(), {}, self.variables))
                     self.variables[left] = list(zip(*new_list))
                     return
-                elif main.startswith("dict(") and main.endswith(")"):
+                elif main.startswith("hashmap("):
                     arg = self.special_split(main[5:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                     if len(arg) < 2:
                         self.error(42, len(arg))
@@ -3643,7 +3696,18 @@ class VEY:
                         dicts[arg[0][v]] = arg[1][v]
                     self.variables[left] = dicts
                     return
-                elif main.startswith("isinstance(") and main.endswith(")"):
+                
+                elif main.startswith("check("):
+                    # a function that checks an expression or a line to see if it is valid
+                    # or does not leak out any errror
+                    line = instruction[6:-1].strip()
+                    try:
+                        self.eval(line, {}, self.variables)
+                        self.variables[left] = True
+                    except Exception as e:
+                        self.variables[left] = False
+                        
+                elif main.startswith("isinstance("):
                     arg = self.special_split(main[11:-1].strip(), ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     value = self.eval(arg[0].strip(), {}, self.variables)
                     value2 = arg[0].strip() # for classes
@@ -4064,6 +4128,35 @@ class VEY:
             self.error(8, right)
             return
     
+    def plain_builtins(self, instruction):
+        """
+        a separate method for separating built in functions in the main parser (execute_functions)
+        these are all built ins, in the future, it would grow and have more built ins options
+        """
+        elif instruction.startswith('output('):
+            # a function that outputs values or multiple values
+            stdout = self.handle_output(instruction)
+            # MAIN PROGRAM STRING MUST BE A RAW STRING FOR THIS
+            if "\\" in str(stdout): # processes backslashes
+                stdout = stdout.encode().decode("unicode_escape")
+            return stdout
+        
+        elif instruction.startswith("exec("):
+            # a function that executes strings as veyl executables
+            code = self.eval(instruction[5:-1], {}, self.variables)
+            try:
+                vey = VEY(code, self.nplibs)
+                vey.execute()
+            except Exception as e:
+                # python errors shouldn't leak out'
+                self.error(1000, type(e).__name__, e)
+            return
+            
+        elif instruction.startswith('quit()'):
+            self.Errors["QuitError"] = True # a hidden error just to stop the program without affecting the main python program
+            return
+        
+        
     def ran(self, main):
         # for the built in range(start, end, set)
         # the range() function, i just ask myself why did i did this?
@@ -4523,3 +4616,4 @@ class VEY:
         value = sse.parse()
         if value is None:
             return
+            
