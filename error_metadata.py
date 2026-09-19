@@ -446,11 +446,43 @@ code = {
         "response": "SyntaxError: Functions and Method parameters expects a ending `)` parenthesis, but got none.",
         "error": "SyntaxError"
     },
+    110: {
+        "response": "TypeError: Array needs 2nd argument `type` for conversion to be complete",
+        "error": "TypeError"
+    },
+    111: {
+        "response": "TypeError: Vector needs 2nd argument `type` for conversion to be complete",
+        "error": "TypeError"
+    },
+    112: {
+        "response": "TypeError: Map needs 2nd and 3rd argument `key_type` and `value_type` for conversion to be complete",
+        "error": "TypeError"
+    },
+    113: {
+        "response": "TypeError: Map needs 3rd argument `value_type` for conversion to be complete",
+        "error": "TypeError"
+    },
+    114: {
+        "response": "TypeError: Datatype {arg1} does not exist",
+        "error": "TypeError"
+    },
+    115: {
+        "response": "SSEError: cannot create or modify `{arg1}` as a Deep System Accesor or Library Accesor SSE values",
+        "error": "SSEError"
+    },
+    116: {
+        "response": "NameError: Invalid characters found in the name while declaring a variable",
+        "error": "NameError"
+    },
     
     
-    
-    
-    # library error metadatas goes way beyond, to error code 1000
+    1000: {
+        "response": "InternalError: This error is caused by an Error that was unable to handle by Veyl's current error handler, and was passed through Python exceptions\nThis is not a problem within the users code, but most likely a problem with Veyl's system itself\n\
+    Error Type: {arg1}\n\
+    Error Message: {arg2}",
+        "error": "InternalError"
+    },
+    # library error metadatas goes way beyond, to error code 1001
     1001: {
         "response": "TypeError: `string` library always expects its first arguments to be a string, but got `{arg1}`",
         "error": "TypeError"
