@@ -1,0 +1,25 @@
+[project]
+name = "veyl"
+version = "0.9.0"
+requires-python = ">=3.9"
+dependencies = [
+    "autocorrect",
+]
+
+[tool.setuptools]
+py-modules = [
+    "veyl",
+    "error",
+    "error_metadata",
+    "built_in_libraries",
+    "resolve_external",
+    "syntax_encloser",
+    "vdebug",
+    "errormd"
+]
+
+[tool.setuptools.packages.find]
+include = ["VeylCLI*"]
+
+[project.scripts]
+veyl = "VeylCLI.veylcli:main"
