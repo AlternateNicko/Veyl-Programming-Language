@@ -1,6 +1,6 @@
-# EpsilonPL/Test/syntax.py
+# VeylPL/Test/syntax.py
 """
-Tests EpsilonPL syntax, built-in functions, and built-in methods (including
+Tests VeylPL syntax, built-in functions, and built-in methods (including
 multi-use cases) by running each Test_code/Syntax case and comparing actual
 stdout output against the expected output declared in its .json metadata.
 """
@@ -10,7 +10,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_harness import (
-    load_epsilon_module, run_eps_program, load_test_cases, TEST_CODE_ROOT,
+    load_veyl_module, run_eps_program, load_test_cases, TEST_CODE_ROOT,
 )
 
 
@@ -29,19 +29,19 @@ def _output_similarity(actual, expected):
     return difflib.SequenceMatcher(None, a, e).ratio()
 
 
-def run_syntax_tests(epsilon_module=None):
+def run_syntax_tests(veyl_module=None):
     """
     Runs every Syntax test case. Returns:
         {"score": float, "results": [ {...} ]}
 
     Scoring per spec:
-      - any error (Python exception OR an Epsilon self.Errors flag set) = 0.0
+      - any error (Python exception OR an Veyl self.Errors flag set) = 0.0
       - otherwise, output similarity to "expected" (graded, see above)
       - "expected": None means the case is pure syntax-validity checking -
         score is 1.0 if it ran clean, 0.0 if anything errored
     """
-    if epsilon_module is None:
-        epsilon_module = load_epsilon_module()
+    if veyl_module is None:
+        veyl_module = load_veyl_module()
 
     cases = load_test_cases(TEST_CODE_ROOT / "Syntax")
     results = []
@@ -49,9 +49,9 @@ def run_syntax_tests(epsilon_module=None):
     for case in cases:
         meta = case["meta"]
         expected = meta.get("expected")
-        run = run_eps_program(epsilon_module, case["code"])
+        run = run_eps_program(veyl_module, case["code"])
 
-        had_epsilon_error = bool(run["errors"]) and any(run["errors"].values())
+        had_veyl_error = bool(run["errors"]) and any(run["errors"].values())
         had_python_error = run["python_exception"] is not None
 
         entry = {
@@ -59,12 +59,12 @@ def run_syntax_tests(epsilon_module=None):
             "expected": expected,
             "actual_stdout": run["stdout"],
             "python_exception": run["python_exception"],
-            "epsilon_errors": {k: v for k, v in (run["errors"] or {}).items() if v},
+            "veyl_errors": {k: v for k, v in (run["errors"] or {}).items() if v},
         }
 
-        if had_python_error or had_epsilon_error:
+        if had_python_error or had_veyl_error:
             entry["score"] = 0.0
-            entry["note"] = "python exception" if had_python_error else "unexpected epsilon error raised"
+            entry["note"] = "python exception" if had_python_error else "unexpected veyl error raised"
         elif expected is None:
             entry["score"] = 1.0
             entry["note"] = "syntax-validity check only, ran clean"
@@ -85,8 +85,8 @@ def _print_report(report):
         if r["score"] < 1.0:
             if r["python_exception"]:
                 print(f"    !! Python exception: {r['python_exception'].splitlines()[-1]}")
-            elif r["epsilon_errors"]:
-                print(f"    !! Epsilon error(s): {list(r['epsilon_errors'].keys())}")
+            elif r["veyl_errors"]:
+                print(f"    !! Veyl error(s): {list(r['veyl_errors'].keys())}")
             elif r["expected"] is not None:
                 print(f"    expected: {r['expected']!r}")
                 print(f"    actual  : {r['actual_stdout'].strip()!r}")

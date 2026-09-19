@@ -1,7 +1,7 @@
-# EpsilonPL/Test/error_test.py
+# VeylPL/Test/error_test.py
 """
-Tests EpsilonPL's error handling/error messages. Runs every Test_code/Error
-case and checks that the EXPECTED epsilon-level error actually got raised
+Tests VeylPL's error handling/error messages. Runs every Test_code/Error
+case and checks that the EXPECTED veyl-level error actually got raised
 through self.Errors, rather than a raw Python exception escaping the
 interpreter (which would mean the language's own error handler failed to
 catch something it should have).
@@ -11,7 +11,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from test_harness import (
-    load_epsilon_module, run_eps_program, load_test_cases, TEST_CODE_ROOT,
+    load_veyl_module, run_vey_program, load_test_cases, TEST_CODE_ROOT,
 )
 
 # error_metadata.py's own code->name mapping, used only to sanity-check that
@@ -40,7 +40,7 @@ def _check_metadata_consistency(error_name, error_code):
     return None
 
 
-def run_error_tests(epsilon_module=None):
+def run_error_tests(veyl_module=None):
     """
     Runs every Error test case. Returns:
         {"score": float, "results": [ {...} ]}
@@ -49,11 +49,11 @@ def run_error_tests(epsilon_module=None):
       - Python exception escaping the interpreter = 0.0 (this is the
         specific failure mode the spec calls out: the language's own
         error handler should have caught this, not raw Python)
-      - expected error name's flag is True in eps.Errors after running = 1.0
+      - expected error name's flag is True in vey.Errors after running = 1.0
       - any other outcome (wrong error raised, or no error raised at all) = 0.0
     """
-    if epsilon_module is None:
-        epsilon_module = load_epsilon_module()
+    if veyl_module is None:
+        veyl_module = load_veyl_module()
 
     cases = load_test_cases(TEST_CODE_ROOT / "Error")
     results = []
@@ -61,13 +61,13 @@ def run_error_tests(epsilon_module=None):
     for case in cases:
         meta = case["meta"]
         expected_error = meta.get("error")  # ["ErrorName", code]
-        run = run_eps_program(epsilon_module, case["code"])
+        run = run_vey_program(veyl_module, case["code"])
 
         entry = {
             "name": case["name"],
             "expected_error": expected_error,
             "python_exception": run["python_exception"],
-            "epsilon_errors": {k: v for k, v in (run["errors"] or {}).items() if v},
+            "veyl_errors": {k: v for k, v in (run["errors"] or {}).items() if v},
         }
 
         if expected_error is None:
@@ -83,7 +83,7 @@ def run_error_tests(epsilon_module=None):
 
         if run["python_exception"] is not None:
             entry["score"] = 0.0
-            entry["note"] = "Python exception escaped - epsilon's own error handler did not catch this"
+            entry["note"] = "Python exception escaped - veyl's own error handler did not catch this"
         elif run["errors"] and run["errors"].get(error_name) is True:
             entry["score"] = 1.0
             entry["note"] = "expected error correctly raised"
@@ -109,7 +109,7 @@ def _print_report(report):
             if r["python_exception"]:
                 print(f"    !! Python exception: {r['python_exception'].splitlines()[-1]}")
             else:
-                print(f"    epsilon errors seen: {r['epsilon_errors']}")
+                print(f"    veyl errors seen: {r['veyl_errors']}")
     overall = report["score"]
     print(f"\nOverall error-handling score: {overall * 100:.1f}%" if overall is not None else "\nOverall error-handling score: N/A")
 
