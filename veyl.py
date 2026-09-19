@@ -4134,7 +4134,7 @@ class VEY:
         a separate method for separating built in functions in the main parser (execute_functions)
         these are all built ins, in the future, it would grow and have more built ins options
         """
-        elif instruction.startswith('output('):
+        if instruction.startswith('output('):
             # a function that outputs values or multiple values
             stdout = self.handle_output(instruction)
             # MAIN PROGRAM STRING MUST BE A RAW STRING FOR THIS
