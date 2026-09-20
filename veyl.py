@@ -7,6 +7,7 @@ import copy
 import sys as system
 import time
 from pathlib import Path
+from tqdm import tqdm
 
 # this fix circular imports
 if "VeylPL" not in system.path:
@@ -612,6 +613,8 @@ class VEY:
         }
         
         # EXTRNAL CHANGES
+        self.hastqdm = False
+        self.pbar = None
         if isinstance(cli_config, dict):
             for c in cli_config.keys():
                 self.variables[c] = cli_config[c]
@@ -1103,8 +1106,43 @@ class VEY:
         self.cache["eval"][exp] = expression
         return expression
         
-    def execute(self):
+    def execute(self, hastqdm=False):
         # main executer of the code, the start up
+        self.hastqdm = hastqdm
+        if hastqdm:
+            with tqdm(total=len(self.full_instructions), desc="Executing...",
+            ncols = 80, ascii=True
+            ) as pbar:
+                self.pbar = pbar
+                while True:
+                    # Check for error
+                    if True in self.Errors.values() and not self.attempt:
+                        return
+                        
+                    if self.cnt >= len(self.Instructions):
+                        break # ends the program once the cnt reaches over the programs amount of line of code
+                    instruction = self.Instructions[self.cnt].strip()
+                    self.update_traceback()
+                    self.traceback["<module>"] = self.cnt
+                    if self.debug or self.adv_debug:
+                        self.run_injected_method("clear_debug_screen")
+                    if instruction is None or instruction == "ignore":
+                        pass
+                    else:
+                        result = self.execute_functions(instruction)
+                    
+                    if result != None and self.system_io:
+                        tqdm.write(result)
+                        result = None
+                    if self.debug and self.system_io or self.adv_debug and self.system_io:
+                        tqdm.write("_" *27)
+                        tqdm.write("\n" * 5)
+                        self.run_injected_method("render_debug_interface", instruction=instruction)
+                    self.cnt += 1
+                    self.og_c += 1
+                    self.pbar.update(1)
+                return
+                
         while True:
             # Check for error
             if True in self.Errors.values() and not self.attempt:
@@ -1159,13 +1197,22 @@ class VEY:
             else:
                 result = self.execute_functions(instruction)
                 if result != None and self.system_io:
-                    veylIO.vprint(result)
+                    if not self.hastqdm:
+                        veylIO.vprint(result)
+                    else:
+                        tqdm.write(result)
             if self.debug and self.system_io or self.adv_debug and self.system_io:
-                veylIO.vprint("_" *27)
-                veylIO.vprint("\n" * 5)
+                if not self.hastqdm:
+                    veylIO.vprint("_" *27)
+                    veylIO.vprint("\n" * 5)
+                else:
+                    tqdm.write("_", * 27)
+                    tqdm.write("\n", *5)
                 self.run_injected_method("render_debug_interface", instruction=instruction)
             self.cnt += 1
             self.og_c += 1
+            if self.hastqdm:
+                self.pbar.update(1)
             if self.breaking or self.continuing:
                 break
             if self.in_func == 0 and was_in or self.is_return:
@@ -1176,6 +1223,7 @@ class VEY:
         self.og_c = ogc
         self.Instructions = original
         return
+        
     
     def prep_exec(self, code): # prepares to execute a code block
         final = ""
@@ -3418,7 +3466,7 @@ class VEY:
                         self.variables[left] = self.objects[main]["variables"][attribute]
                     return
                     
-                elif not main.endswith(")"):
+                elif any(main.startswith(e + "(") for e in self.bif) and not main.endswith(")"):
                     self.error(109)
                     return
                     
