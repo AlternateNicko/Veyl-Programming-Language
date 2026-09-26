@@ -29,6 +29,7 @@ class libraries:
     - debug
     """
     def __init__(self, data):
+        self.data = data
         self.__dict__ = data.__dict__
         self.eval = data.eval
         self.special_split = data.special_split
@@ -110,7 +111,11 @@ class libraries:
                         args = self.eval(man[5:-1].strip(), {}, self.variables, from_lib=True)
                         sys.exit(args + "\n")
                     elif man.startswith("attempt(") and man.endswith(")"):
-                        self.attempt = not self.attempt
+                        # self.attempt is a nesting-depth counter (see veyl.py), not a bool -
+                        # toggle it between "off" (0) and "one level of manual override" (1)
+                        # instead of doing a boolean `not`, which would collapse any real
+                        # try/catch depth down to True/False and desync the counter.
+                        self.attempt = 0 if self.attempt else 1
                 if "debug" in self.library and instruction.startswith(self.library_name["debug"] + "."):
                     man = self.special_split(instruction, ".", ("'", '"'), ("'", '"'))[1]
                     if man.startswith("buzz(") and man.endswith(")"):
@@ -186,7 +191,10 @@ class libraries:
                                 print(f"{e}: {self.Errors[e]}")
                         else:
                             print(self.Errors[args])
-                    
+#                    elif man.startswith("profile(") and man.endswith(")"):
+#                        args = man[8:-1].strip()
+#                        # class_object or <module>
+                        
                 return (self.variables, self.cnt)
             except Exception as e:
                 print(e)
@@ -633,6 +641,8 @@ class libraries:
                         self.variables[left] = sys.maxsize
                 elif man.startswith("version"):
                     self.variables[left] = self.version
+                elif man.startswith("version_info"):
+                    self.variables[left] = self.version_info
                 elif man.startswith("platform"):
                     self.variables[left] = sys.platform
                 elif man.startswith("sync_variables"):
