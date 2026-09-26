@@ -1,100 +1,116 @@
-![Static Badge](https://img.shields.io/badge/Veyl--Programming--Language-text)
-![GitHub Release](https://img.shields.io/github/v/release/AlternateNicko/Veyl-Programming-Language)
-![GitHub Created At](https://img.shields.io/github/created-at/AlternateNicko/Veyl-Programming-Language)
-![GitHub commits since latest release](https://img.shields.io/github/commits-since/AlternateNicko/Veyl-Programming-Language/latest)
-![GitHub last commit](https://img.shields.io/github/last-commit/AlternateNicko/Veyl-Programming-Language)
-![GitHub Downloads (all assets, all releases)](https://img.shields.io/github/downloads/AlternateNicko/Veyl-Programming-Language/total)
-![GitHub top language](https://img.shields.io/github/languages/top/AlternateNicko/Veyl-Programming-Language)
-![GitHub code size in bytes](https://img.shields.io/github/languages/code-size/AlternateNicko/Veyl-Programming-Language)
-![GitHub Release Date](https://img.shields.io/github/release-date/AlternateNicko/Veyl-Programming-Language)
-___
-# About
-___
+# Veyl-Lang
 
-Veyl-Lang (or Veyl) is a transpiled interpreter language writen in python.
+## About
+Veyl-Programming Language (or Veyl) is a expiremental language in 15th November of 2024. It was a educational project when I first started to learn python, and helped me learn debugging and diagnostic skills, and software development.
 
-Veyl includes an easy to read syntax, with all the basic keywords and features.
-Simple language features like declarations, instances, keywords, built ins, and OOP (Object Oriented Programming)
-And many more features Veyl includes,
-The followings are:
-- custom library injections
-- unique built ins
-- robust accessor systems (using `public` `private`)
+It is a interpreter language with each line read by a program counter. And has its own unique syntax, while the structure are still recognizable, simple, and familiar.
+It is inspired by python and C/C++ syntax, all programs in this repository are coded on python.
 
-Veyl's source code is written in Python
+## Setup
+After installation (either git clone, or downloading the zip file), immidietly rename the folder to "VeylPL" as all program expects the main project directory to be VeylPL.
+It is required to have Python version 3.9 and above and the third party libraries, autocorrect and tqdm.
+Main Setup from top (first) to bottom (last)
 
-___
-# Syntax
-___
+Download one of the releases, or clone it using "git clone"
+```shell
+git clone https://github.com/AlternateNicko/Veyl-Programming-Language.git
+```
+- Change Directory:
+```shell
+cd Veyl-Programming-Language
+```
+or path to the project directory
 
-Keywords:
-- if
-- else if
-- else
-- while
-- for
-- private
-- public
-- func
-- call
-- attempt
-- catch
-- import
-- class
-- inherit
-- load
-- sync
-- desync
-- open
-- break
-- continue
-- return
-- global
-- from
-- pass
-- const
+- Directory name change:
+    "Veyl-Programming-Language" -> "VeylPL"
+- Veyl CLI entry point setup:
+```shell
+pip install -e .
+```
 
-• Other keywords (mostly used in conditions, loops, etc)
-- and
-- or
-- in
-- not
-- from
-- as
+## How to run my own programs
+To create your own program, you need to create a small python program that will act as the API with the code you have written for veyl in python.
+example (you can use):
+```python
+from VeylPL.veyl import VEY
 
-• datatypes
-used optionally in function return types, and variable types
-- int - intergers
-- str - string (mutable and immutable)
-- float - floating point numbers
-- bool - boolean
-- array - fixed size sequence of elements
-- tuple - an immutable, fixed size of sequence of elements
-- vector - dynamic arrays (not fixed size) with dynamicly typed elements
-- map (hash map)
-- set (hash set)
-- None (usually defined as void in keywords)
+code = r"""
+output("Hello, World!")
+"""
 
-• Operators
-+ Addition
-- Subtraction
-* Multiplication
-/ Division
-% Modular division
-/< Integer division
-** Exponential
-++ Increment
--- Decrement
-== Is Equal
-!= Is Not Equal
-< Less than
-> Greater than
-<= Less or equal than
->= Greater or equal than
+vey = VEY(code)
+vey.execute()
+```
 
-___
-# core syntax elements
-___
+it is recommended to use raw multi lined strings, raw strings for unicode escape character support, and multi lined for simplicity and readability.
+For other example, this is the recommended sample code for running programs
+Advanved example:
+```python
+from VeylPL.veyl import VEY
+from VeylPL.vdebug import debug
+
+code = r"""
+a = 25
+b = 50
+
+output(a + b)
+"""
+
+vey = VEY(code)
+vey.execute()
+
+vdb = debug(1)
+vdb.print_init(vey)
+vdb.print_functions(vey)
+vdb.print_classes(vey)
+vdb.print_libraries(vey)
+```
+
+## API for custom user made modules
+This is a feature where you can pass a python module (mostly required a python object like a function or class) inside veyl as a third party library.
+The set up itself is hard as it has to follow a strict class structure as a simple API entry.
+Sample code:
+```python
+# add other library imports here
+...
+
+class mylib:
+    def __init__(self, data):
+        self.__dict__ = data.__dict__
+        self.veyl = data
+    
+    def process(self, instr, variant="ol"):
+        # name "process" is required because veyl expects a method named process,
+        # a 2nd argument named "variant" with 2 different mode, ol (one line), av (variable assignment)
+        if variant == "ol":
+            self.oneline_dispatch(...)
+        else:
+            self.assign_variable_dispatch(...)
+    # dispatch methods are added here
+```
+in the main program where veyl codes are executed in python, add this code
+```python
+import MyLibrary
+module = {
+    "mylib": MyLibrary.mylib
+}
+
+vey = VEY(code, module)
+vey.execute
+```
+inside the veyl program, you can do this now.
+```
+import mylib
+
+mylib.methods(...)
+var = mylib.methods(...)
+
+output(mylib.methods(...))
+```
+
+check out library/Test.py for example class structure.
+
+## Core syntax elements
 • Code blocks - These are enclosed with curly brackets { }, but curly brackets can also be used in map data types
 
 • /< - this symbol is defined as a comment
@@ -130,120 +146,21 @@ public func method()
     ...
 }
 ```
-
-constructors must be defined as "public" or else the class main constructor cannot be accessed,
-```
-public func <const>()
-{
-    public name = "Bartolomew"
-}
-```
-
 usage of public and private are immidietly different whenever the program is inside a class.
 
-3. "inherit" - The constructor class is also where "inherit" keyword is mostly used, "inherit" gets the attributes, methods, and other more class object information from a Parent class, which is usually defined as
-```python
-class Child_class(Parent_class1, Parentclass2, ...)
+If you want to know more about veyl syntax and more examples.
+In veyl:
 ```
-___
-# Libraries
-___
-Veyl supports custom user built libraries that it can add within the code, and treats it as one
-This can be either importing .vey codes
-or building your own library (in /library directory) which uses python programs or even deeper, any type of program as long as it follows these instructions
-```python
-#add this code to /library directory
-import ... #import any libraries, modules, etc as dependencies
+import help
 
-class any_library_name:
-    #the class constructor method must follow this arguments and code
-    def __init__(self, data):
-        self.__dict__
-        self.veyl = data # data is an object pointing to the current veyl class object (self)
-        ...
-    # this method must also be added
-    def process(self, line, variant="ol"):
-        # all values must be returned
-        if variant == "av": # meaning assign variable
-            return self.variable_assignment(line)
-        else:
-            return elf.one_line_instruction(line)
+help.init()
 ```
-Important notices
-- self.process() must be always defined as Veyl expects a method named process() with 2 arguments, line and variant.
-- variants are 2 types,
-- 1. "av" means Assign to Variable, this is defined when there is a code like this
-`variable = library.method()`
-where "library" is the imported library, "method" is the method of that library (or can be anything like variable assignlents)
-and "variable" as the variable name
-- name of module cannot overwrite the names of other built in libraries
-
-___
-# Setup
-___
-The setup is simple, you can open up NBIDE.py, a simple notebook like IDE (doesn't execute), then after writing the code, save it as .vey, a file extension for Veyl
-then at interactive_shell, type
-`veyl your_file.vey`
-to setup Veyl, you have to first make a .py python program outside of the directory where Veyl (VEYL) is stored.
-then write this code
-```python
-from VeylPL.veyl import VEYL
-
-instructions = """
-/< put your code here
-"""
-module = {}
-veyl = VEYL(instructions, module)
-results = veyl.execute()
+In veyl CLI:
 ```
-• Key pointers of this code
-  1. from VeylPL.veyl import VEYL - if VeylPL in "from VeylPL.veyl..." is a different name, change it immidietly
-  2. instructions - must be a doc string
-  3. module dictionary - this is where special libraries are stored inside /library directory.
-  4. VEYL class - the class always expects 1 or 2 arguments, the most important is the "instructions" argument, module argument is optional if you didn't include any libraries from /library directory
-  5. veyl.execute() - doesn't actually need variable assignments.
-
-for simple debugging, write this on top of the code
-```python
-from VeylPL.vdebug import debug
+veyl --helps
 ```
-then do
-```python
-veyl = VEYL(instructions) # or where VEYL() gets defined, the code in the following must be added after veyl
-ndb = ndebug(True) # False for debug mode off
-ndb.print_init(veyl) # The first print, this prints the variables and values and information
-ndb.print_functions(veyl) # prints out the each functions, what their code block is, arguments, and information
-ndb.print_classes(veyl) # prints out the classes and its attributes, methods, and inherited class
-```
-
-• This is usefull for simply debugging after code execution to check informations about the program and any issues that needed to be fixed
-
-And For special modules in /library, do this
-data_lib for example
-
-```python
-from VeylPL.veyl import VEYL
-from VeylPL.library.data_lib import class_module
-
-instructions = """
-/< put your code here
-"""
-module = {
-    "datalib": class_module,
-    ...
-}
-veyl = VEYL(instructions, module)
-results = veyl.execute()
-```
-
-• key pointers:
-- module must have a key with a string, and a name that will be used as the name of the library inside Veyl libraries
-- Directory must match (if the downloaded github .zip file has a different name, change the name to VeylPL)
-- "from VeylPL.library.data_lib" must be imported, and must be the main class
-- the module must have the value as a instance of the class object, and don't run the class initialize method
-
-• Where to find example?
-- Check out `built_in_libraries` for example, it uses the same layout, but mostly coded for multiple libraries parsing
+or if you want a more clearer explanation without commands or codes, check out "veyl-encyclopedia.md", it includes keywords, built ins (functions, method, standard libraries), and custom unique features. All with descriptions, example use, error statements/conditions, and more.
+The encyclopedia includes unique veyl features that you are unfamiliar with other language, and offers you a clear explanation.
 
 ___
 # Example Veyl Codes
@@ -373,24 +290,31 @@ while (True) {
 ```
 
 ___
-# Things to Note
+## Things to Note
 ___
 - This code was first developed around November of 2024, Where I only had been learning python for about 3 months.
 - This transpiled language is a hobby language and project, This project was develop with the purpose of teaching me more about python, programming, debugging, and more
 - There are parts of the Veyl source code that were written a year ago, where codes weren't structured properly, and some were written a few months ago, when I finally came back to work on to this language, which are structured neatly while still following the design of the program when i first written it.
+
 ___
-# What to expect
+## What to expect
 ___
 - you should expect tons of bugs, errors, and parsing problems. This language is still not bug free
 - The language is getting bug fixes and development everyday, updates frequently every week, but sometimes it won't be quick, as I (main contributor) am also busy with other things.
 - Most updates are bug fixes, and major updates only drops whenever there are minimal bugs left that doesn't occur majorly in most programs
 - Veyl version 2.0.0 might take months or years, as I have plans to rewrite everything all with my current knowledge in programming.
 - Testing takes long, as most tests works while some tests doesn't. Each tests are Veyl test programs, most of the time, I always test after debugging, some of these programs works, while others doesn't. So some bug fixes makes little difference
+
 ___
-# Updates
+## Updates
 ___
 "veyl.py" is where the main source code is located.
 Veyl gets updates every 1-2 weeks for bug fixes, monthly for features
 
 • Minor updates - Veyl will get small features and bug fixes with this updates, Minor updates also includes updates outside of Veyl.py, built in libraries, or others will also get updates.
 • Major updates - Veyl gets updates that includes huge features, additions, bug fixes, and even reworks. These updates are mostly rare, sometimes just every few months or a year if I have the time. This type of update is important as it could majorly improve speed, optimizations, future development, or syntaxes.
+
+___
+## Extra's
+___
+[VeylBinder](https://github.com/AlternateNicko/VeylBinder-Veyl2Python)
