@@ -245,12 +245,12 @@ class libraries:
                     a = self.eval(args, {}, self.variables, from_lib=True)
                     self.variables[left] = m.fabs(a)
                 elif man.startswith("fmod(") and man.endswith(")"):
-                    args = man[5:-1].strip().strip(",")
+                    args = self.special_split(man[5:-1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     b = self.eval(args[1], {}, self.variables, from_lib=True)
                     self.variables[left] = m.fmod(a, b)
                 elif man.startswith("remainder(") and man.endswith(")"):
-                    args = man[10:-1].strip().strip(",")
+                    args = self.special_split(man[10:-1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     b = self.eval(args[1], {}, self.variables, from_lib=True)
                     self.variables[left] = m.remainder(a, b)
@@ -259,7 +259,7 @@ class libraries:
                     a = self.eval(args, {}, self.variables, from_lib=True)
                     self.variables[left] = m.modf(a)
                 elif man.startswith("copysign(") and man.endswith(")"):
-                    args = man[9:-1].strip().strip(",")
+                    args = self.special_split(man[9:-1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     b = self.eval(args[1], {}, self.variables, from_lib=True)
                     self.variables[left] = m.copysign(a, b)
@@ -372,7 +372,7 @@ class libraries:
                     a = self.eval(args, {}, self.variables, from_lib=True)
                     self.variables[left] = m.fsum(a)
                 elif man.startswith("prod(") and man.endswith(")"):
-                    args = man[6:-1].strip().strip(",")
+                    args = self.special_split(man[5:-1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     if len(args) > 1:
                         b = self.eval(args[1], {}, self.variables, from_lib=True)
@@ -380,7 +380,7 @@ class libraries:
                         b = 1
                     self.variables[left] = m.prod(a, b)
                 elif man.startswith("dist(") and man.endswith(")"):
-                    args = man[5:-1].strip().strip(",")
+                    args = self.special_split(man[5:-1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
                     a = self.eval(args[0], {}, self.variables, from_lib=True)
                     b = self.eval(args[1], {}, self.variables, from_lib=True)
                     self.variables[left] = m.dist(a, b)
