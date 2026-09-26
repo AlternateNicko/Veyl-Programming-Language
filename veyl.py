@@ -31,9 +31,9 @@ if "VeylPL" not in system.path:
         pass
     try:
         import veylIO
-    except ImportError as e:
+    except Exception as e:
         pass
-
+import veylIO
 _ASSIGN_FASTPATH_EXCLUDE = (
     '/<', 'output', 'ignore', 'quit()', 'inherit ', '<debug>',
     'load', 'break', 'continue', 'while', 'return', 'global', 'if', 'else',
@@ -508,7 +508,9 @@ class VEY:
         self.Instructions = self.build_instructions(instructions) # main instruction line gets split line by line
         self.full_instructions = self.Instructions # Original constant instructions of self.Instructions
         self.raw_instructions = instructions # Untouched raw instruction line
-        self.variables = {} # all the variables are stored here
+        self.variables = {} # all the variables are stored here, both user defined and system variables
+        self.user_variables = {} # all user declared variables are loaded here
+        self.sys_variables = {} # all SSE Value Variables are loaded here
         self.cnt = 0 # the main pointer to the line of code
         self.traceback = {"<module>": self.cnt} # the traceback, tracing back to where errors originate
         self.classes = {} # name: {methods: {method name: same as funcs}, variables: {name: value}, inheritence: [class name]
@@ -554,8 +556,14 @@ class VEY:
         self.in_if = False # inside an if statement
         self.if_executed = False # if an if statement is executed with the conditions being true, turns True
         self.condition = False # for the if, else if statement, turns true once their condition is also true
-        self.attempt = False # for try-except, but in this language is try-catch, once attempting to execute a code, all errors wont print out a trace back, instead it gets catch if it matches with the error name of the catch block
-        self.in_class = [None, False, None] # if the program is currently in a code, first index stores the name of the class, the second shows True if they are in a class, third is what class objecf it is (None if it's inside a class) else False
+        self.attempt = 0 # for try-except, but in this language is try-catch, once attempting to execute a code, all errors wont print out a trace back, instead it gets catch if it matches with the error name of the catch block
+        # NOTE: this is a depth COUNTER, not a bool. try increments it, its matching catch
+        # decrements it. That way nested try/catch blocks don't stomp on each other's state -
+        # an inner catch finishing only brings the count down by one, instead of forcing it
+        # straight to False/0 and breaking an outer try that's still "in progress".
+        # 0 is falsy and any positive int is truthy, so every existing `if self.attempt` /
+        # `if not self.attempt` check elsewhere keeps working exactly as before.
+        self.in_class = [None, False, None, False] # if the program is currently in a code, first index stores the name of the class, the second shows True if they are in a class, third is what class objecf it is (None if it's inside a class) else False
         self.breaking = False # force break out loops
         self.continuing = False # continues
         self.evals = False # if it's currently evaluating something
@@ -585,8 +593,8 @@ class VEY:
         self.original_var = [] # original variable once calling a new function, the self.variables are replace with a new dictionary, and original_var stores the global variables
         self.cache = {
             "eval": {}, # for evaluation (v1.0.3)
-            "func": {}, # function cache (v1.0.7)
-            "class": {}, # class method cache (v1.0.7)
+            "func": {}, # function cache
+            "class": {}, # class method cache
             "cond": {}, # for conditions (v1.0.5)
         } # the cache, mostly use for memoization, func and classes still has no use for now
         self.objects = {} # for defined variables using class objects
@@ -615,16 +623,26 @@ class VEY:
         # EXTRNAL CHANGES
         self.hastqdm = False
         self.pbar = None
+        self._cli_config = cli_config
         if isinstance(cli_config, dict):
             for c in cli_config.keys():
-                self.variables[c] = cli_config[c]
+                self.variables["<"+ c + ">"] = cli_config[c]
         self.external = {} # place holder
         self.external_call = {} # placeholder for holding callable objects
         self.is_external = isexternal
         self.external_config = config
+        
         if isexternal:
             resolve = resolve_external.resolve(self, config)
             self.__dict__ = resolve.start().__dict__
+        
+        # System:
+        self.sys_variables = {
+            "<file>": self.file_name,
+            "<variable>": self.variables,
+            "<extension>": self.file_extension,
+            
+        }
         
         
     def build_instructions(self, source):
@@ -906,7 +924,7 @@ class VEY:
                     vals = []
                     for ex in expression:
                         # please don't tell me why it is like this
-                        self.assign_variable("<<temporary_variable>> = " + ex, methods) # this class method includes handling variable assignments and the functions for arbitrary
+                        self.assign_variable("<<temporary_variable>> = " + ex, methods, fromsystem=True) # this class method includes handling variable assignments and the functions for arbitrary
                         expression = self.variables["<<temporary_variable>>"] # the name of the variable is like this because this may delete a existing variable that may have this name
                         vals.append(str(expression))
                     del self.variables["<<temporary_variable>>"] # it deletes it
@@ -930,7 +948,7 @@ class VEY:
                             name_var = expression
                             return self.classes[self.in_class[0]]["variables"][name_var]
                         
-                        self.assign_variable("<<temporary_variable>> = " + expression.strip(), methods) # if the expression doesn't contain any arithmetic characters (+ * - /), it runs this
+                        self.assign_variable("<<temporary_variable>> = " + expression.strip(), methods, fromsystem=True) # if the expression doesn't contain any arithmetic characters (+ * - /), it runs this
                         expression = self.variables["<<temporary_variable>>"]
                         expression = str(expression)
                         del self.variables["<<temporary_variable>>"]
@@ -1171,7 +1189,7 @@ class VEY:
             self.og_c += 1
         return
         
-    def exec_block(self, code, count):
+    def exec_block(self, code, count, fromcatch=False, class_exec=False):
         # executes a code block, separate uses from the execute method
         self.cnt = 0
         ogc = self.og_c
@@ -1180,10 +1198,11 @@ class VEY:
         ogif = self.in_if
         self.Instructions = code.split("\n")
         og_type = self.return_type
+        og_var = self.variables.copy() if class_exec else False
         while self.cnt < len(self.Instructions):
             # Check for errors
-            if True in self.Errors.values() and not self.attempt:
-                return
+            if any(list(self.Errors.values())) and not fromcatch:
+                break
             instruction = self.Instructions[self.cnt].strip()
             self.update_traceback()
             if self.debug or self.adv_debug:
@@ -1217,16 +1236,19 @@ class VEY:
                 break
             if self.in_func == 0 and was_in or self.is_return:
                 break
+        if class_exec:
+            self.process_class_init()
+            if class_exec:
+                self.variables = og_var
         self.cnt = count
         self.return_type = og_type
         self.in_if = ogif
         self.og_c = ogc
         self.Instructions = original
         return
-        
     
     def prep_exec(self, code): # prepares to execute a code block
-        final = ""
+        final = r""
         for i in code:
             final += i + "\n"
         return final
@@ -1277,7 +1299,7 @@ class VEY:
             return block, cnt, ogc
         else:    
             self.error(9)
-            return [], 0
+            return [], 0, 0
    
     def process_vars(self):
         """
@@ -1289,9 +1311,13 @@ class VEY:
         # multiple variable checks
         for v in self.variables.keys():
             if self.in_class[1] and v in self.special[self.in_class[0]]["variables"].keys() and self.special[self.in_class[0]]["variables"][v]:
-                self.classes[self.in_class[0]]["variables"][v] = self.variables[v]
-                if v not in self.classes[self.in_class[0]]["variables"]["<attr>"]:
-                    self.classes[self.in_class[0]]["variables"]["<attr>"].append(v)
+                if self.in_class[2] is None:
+                    # only write through to the shared class definition when running
+                    # statically on the class itself; an object instance must only
+                    # ever update its own entry in self.objects (see below)
+                    self.classes[self.in_class[0]]["variables"][v] = self.variables[v]
+                    if v not in self.classes[self.in_class[0]]["variables"]["<attr>"]:
+                        self.classes[self.in_class[0]]["variables"]["<attr>"].append(v)
             if self.in_class[2] is not None and self.in_class[2] in self.objects.keys() and v in self.objects[self.in_class[2]]["variables"].keys():
                 self.objects[self.in_class[2]]['variables'][v] = self.variables[v]
             if v not in self.constants.keys():
@@ -1981,7 +2007,7 @@ class VEY:
         self.variables.update(og_var)
         self.in_func -= 1
         if self.in_func <= 0:
-            self.in_class = [None, False, None]
+            self.in_class = [None, False, None, None]
         self.Instructions = original_inst
         self.cache = og_cache
         self.cnt = count
@@ -2144,7 +2170,7 @@ class VEY:
                 self.error(15, name, type(target))
             return
     
-    def datatype_keyword(self, instruction, acc="pub", dt=None, token=None, ismap=False):
+    def datatype_keyword(self, instruction, acc="pub", dt=None, token=None, ismap=False, isclass=False):
         if dt in ["array", "vector", "map"]:
             data_type = dt
         else:
@@ -2155,15 +2181,18 @@ class VEY:
             name = instruction.split("=", 1)[0].strip()
             self.assign_variable(instruction, dt=data_type, token=token, ismap=ismap)
             if acc == "pub" and self.in_class[1]:
-                self.special[self.in_class[0]]["variables"][name] = True
+                if isclass:
+                    self.classes[self.in_class[0]]["variables"][name] = self.variables[name]
+                else:
+                    self.special[self.in_class[0]]["variables"][name] = True
                 self.process_vars()
             elif acc == "priv" and self.in_class[1]:
                 self.special[self.in_class[0]]["variables"][name] = False
                 self.process_vars()
         elif instruction.startswith("func "):
-            self.function_creation(instruction, acc, data_type)
+            self.function_creation(instruction, acc, data_type, isclass)
     
-    def function_creation(self, instruction, acc_type, dt="<any>"):
+    def function_creation(self, instruction, acc_type, dt="<any>", isclass=False):
         types = acc_type
         start = self.cnt
         ogc = self.og_c
@@ -2183,14 +2212,20 @@ class VEY:
                 return
         block, count, eogc = self.get_block()
         if types == "pub":
-            self.functions[name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc, 'datatype': dt}
+            if isclass:
+                self.classes[self.in_class[0]]["methods"][name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, "ogc": ogc, "end ogc": eogc, "datatype": dt, "type": acc_type}
+            else:
+                self.functions[name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc, 'datatype': dt}
         else:
-            self.functions[name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc, 'datatype': dt}
-            if self.func_name not in self.func_scope.keys():
-                self.func_scope[self.func_name] = {"variables": {}, "functions": {}, "classes": {}}
-            self.func_scope[self.func_name]["functions"][name] =  {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc}
-            self.func_scope[self.func_name]['functions'].update(self.functions)
-            self.func_scope[self.func_name]['functions'][name]['datatype'] = dt
+            if isclass:
+                self.classes[self.in_class[0]]["methods"][name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, "ogc": ogc, "end ogc": eogc, "datatype": dt, "type": acc_type}
+            else:
+                self.functions[name] = {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc, 'datatype': dt}
+                if self.func_name not in self.func_scope.keys():
+                    self.func_scope[self.func_name] = {"variables": {}, "functions": {}, "classes": {}}
+                self.func_scope[self.func_name]["functions"][name] =  {'block': block, 'args': func_arg, 'end': count, 'start': start, 'ogc': ogc, 'end ogc': eogc}
+                self.func_scope[self.func_name]['functions'].update(self.functions)
+                self.func_scope[self.func_name]['functions'][name]['datatype'] = dt
         self.cnt = count - 1
         self.og_c = eogc
     
@@ -2218,6 +2253,12 @@ class VEY:
         else:
             instruction = instruction.strip()
 
+        # identifies if it's variable assignment, function call, or a keyword
+        syntax_type = "keyword"
+        if "=" in instruction and self.special_find(instruction, "=", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
+            syntax_type = "assignment"
+        elif instruction.startswith(instruction + "("):
+            syntax_type = "function"
         if not instruction:
             return
             
@@ -2225,7 +2266,7 @@ class VEY:
 
         elif instruction.startswith(('{', '}')): pass # because it may be a peice of a code block
                     
-        elif instruction.startswith('pass'):
+        elif instruction.startswith('pass') and not syntax_type in ["assignment", "function"]:
             return # passes instructions, usefull for placeholders
         
         elif (instruction + "(").startswith(tuple(self.pbi)):
@@ -2292,7 +2333,7 @@ class VEY:
             elif inst.startswith("function"):
                 veylIO.vprint(self.func_name)
             
-        elif instruction.startswith('load'):
+        elif instruction.startswith('load '):
             """
             this is a separate keyword used for loading iterables with a value to one of its items/address, or for changing mutable strings
             this can be used on strings, lists, tuples, dynamic maps (dict), hash maps, hash sets, array, vector
@@ -2324,7 +2365,7 @@ class VEY:
             else:
                 self.load(name, addr_chain, value)
         
-        elif instruction.startswith("break"):
+        elif instruction.startswith("break") and not syntax_type in ["assignment", "function"]:
             # breaks out of a loop
             if self.exec_fl <= 0:
                 self.error(19)
@@ -2332,7 +2373,7 @@ class VEY:
             self.breaking = True
             return
             
-        elif instruction.startswith('continue'):
+        elif instruction.startswith('continue') and not syntax_type in ["assignment", "function"]:
             # continues the loop, in a loop
             if self.exec_fl <= 0:
                 self.error(20)
@@ -2340,7 +2381,7 @@ class VEY:
             self.continuing = True
             return
             
-        elif instruction.startswith('while'):
+        elif instruction.startswith('while '):
             """
             this is the language's while loop, this loops a peice of code if the condition is true
             the condition must be enclosed with parenthesis, boolean operations mustbe outside the parenthesis (but keyword boolean operstions still works only on expressions)
@@ -2374,7 +2415,7 @@ class VEY:
             self.cnt = count
             self.og_c = eogc
         
-        elif instruction.startswith('return') and self.in_func > 0 or instruction.startswith('return') and self.in_class[1] and self.in_func > 0:
+        elif (instruction.startswith('return') and self.in_func > 0 or instruction.startswith('return') and self.in_class[1] and self.in_func > 0) and not syntax_type in ["assignment", "function"]:
             """
             this returns a value only when with in a function, this is used on variable assignments, when calling the function is needed.
             This can also support multiple return values (packaging, unpackaging), or you can use this as a plain exit code for the function
@@ -2403,11 +2444,11 @@ class VEY:
             self.is_return = True
             return
         
-        elif instruction.startswith('return') and self.in_func == 0:
+        elif instruction.startswith('return') and self.in_func == 0 and not syntax_type in ["assignment", "function"]:
             # this is just a check whether return was used outside a function
             self.error(89)
             
-        elif instruction.startswith('global') and self.in_func:
+        elif instruction.startswith('global ') and self.in_func:
             """
             uses a variable outside the global scope, and can modify the original value of the variable
             """
@@ -2417,7 +2458,7 @@ class VEY:
                 return None
             self.variables[arg] = self.original_var[-1][arg]
             
-        elif instruction.startswith('if'):
+        elif instruction.startswith('if '):
             """
             the if statement of the programming language, this runs a code if its given condition is True
             else if the condition is false, it looks for the next else/else if statement before running the next none-branching code below the code block
@@ -2491,7 +2532,7 @@ class VEY:
                 self.cnt = count - 1
                 self.og_c = eogc - 1
                 return
-        elif instruction.startswith('else'):
+        elif instruction.startswith('else '):
             """
             this is two keywords depending on usage, which is
             else if and else statements.
@@ -2577,7 +2618,7 @@ class VEY:
             
         
         # for loops (for each and loops)
-        elif instruction.startswith('for'):
+        elif instruction.startswith('for '):
             """
             a for loop, this loops through iterables and executes a code using the item it iterates to
             it could also unpack items (tuples only)
@@ -2668,21 +2709,28 @@ class VEY:
                 og = self.variables
                 self.variables = self.classes[name]["variables"]
                 self.classes[name]["methods"][m_name]["end"] = self.cnt
-                isclass = True
+                isclass = object_name is None
                 called = True
-                self.run_methods(name, m_name, True, object_name, args, False)
+                self.run_methods(name, m_name, object_name is not None, object_name, args, False)
                 self.variables = og
             
-            elif self.in_class[1] and name in self.special[self.in_class[0]]["methods"].keys() and self.special[self.in_class[0]]["methods"][name]:
+            elif self.in_class[1] and name in self.classes[self.in_class[0]]["methods"].keys():
                 # runs class methods within the class itself
                 m_name = name.strip()
                 class_n = self.in_class[0]
+                current_obj = self.in_class[2]  # None if running on the class itself (static), else the instance name
                 classes = self.classes[class_n]
                 args = self.special_split(arg[1], ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                 args = [self.convert_arg(arg.strip()) for arg in args]
                 classes["methods"][m_name]["end"] = self.cnt
                 called = True
-                self.run_methods(class_n, m_name, False, class_n, args, False)
+                self.run_methods(
+                    class_n, m_name,
+                    current_obj is not None,
+                    current_obj if current_obj is not None else class_n,
+                    args, False,
+                    obj_name=current_obj
+                )
                 
             elif name in list(self.functions.keys()):
                 a = self.special_split(arg[1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
@@ -2723,7 +2771,7 @@ class VEY:
             if not self.in_class[1] and isclass:
                 self.special[name]["access"] = False
                 
-        elif instruction.startswith("public") or instruction.startswith("private"):
+        elif instruction.startswith("public ") or instruction.startswith("private "):
             # visibility control for functions, class methods, and variables
             # this is the only way to define functions, methods, and class variables
             types = ""
@@ -2742,11 +2790,15 @@ class VEY:
                 value = self.eval(arg[1].strip(), {}, self.variables)
                 self.variables[name] = value
                 if types == "pub" and self.in_class[1]:
-                    self.special[self.in_class[0]]["variables"][name] = True
+                    if not self.in_class[3]:
+                        self.special[self.in_class[0]]["variables"][name] = True
+                    else:
+                        self.classes[self.in_class[0]]["variables"][name] = value
                     self.process_vars()
                     return
                 elif types == "priv" and self.in_class[1]:
-                    self.special[self.in_class[0]]["variables"][name] = False
+                    if not self.in_class[3]:
+                        self.special[self.in_class[0]]["variables"][name] = False
                     self.process_vars()
                     return
                 elif types == "pub":
@@ -2758,7 +2810,10 @@ class VEY:
             elif not instruction.startswith("func ") and instruction in self.variables.keys(): # not assignments
                 name = instruction
                 if types == "pub" and self.in_class[1]:
-                    self.special[self.in_class[0]]["variables"][name] = True
+                    if not self.in_class[3]:
+                        self.special[self.in_class[0]]["variables"][name] = True
+                    else:
+                        self.classes[self.in_class[0]][""]
                 elif types == "priv" and self.in_class[1]:
                     self.special[self.in_class[0]]["variables"][name] = False
                 elif types == "pub":
@@ -2771,23 +2826,23 @@ class VEY:
                 # user define function
                 self.function_creation(instruction, types)
             elif instruction.startswith(tuple(self.datatypes)):
-                self.datatype_keyword(instruction, types)
+                self.datatype_keyword(instruction, types, isclass=True)
             elif instruction.startswith("class "):
                 name = self.handle_class(instruction, types=types)
                 if types == "priv":
                     self.private_classes[name] = self.classes[name]
         # error handling keywords
-        elif instruction.startswith("try"):
+        elif instruction.startswith("try "):
             # error handling by catching errors, with throw and catch
             block, count, eogc = self.get_block()
-            self.attempt = True
+            self.attempt += 1 # entering an attempt region; nested tries just add to the depth
             code = self.prep_exec(block)
             self.exec_block(code, count)
             self.cnt = count - 1
             self.og_c = eogc - 1
             return
         
-        elif instruction.startswith('catch'): # Catching Errors
+        elif instruction.startswith('catch '): # Catching Errors
             if self.attempt:
                 new_name = []
                 error_name = instruction[5:-1].strip() if instruction.endswith('{') else instruction[5:]
@@ -2795,7 +2850,6 @@ class VEY:
                 for letter in error_name:
                     if letter != " ":
                         new_name.append(letter)
-                self.attempt = False # so the errors and messages out of try block will work
                 error_name = "".join(new_name)
                 block, count, eogc = self.get_block()
                 if error_name in self.Errors.keys():
@@ -2803,7 +2857,7 @@ class VEY:
                         for i in self.Errors:
                             self.Errors[i] = False
                         code = self.prep_exec(block)
-                        self.exec_block(code, count)
+                        self.exec_block(code, count, fromcatch=True)
                     self.cnt = count - 1
                     self.og_c = eogc - 1
                 elif error_name == "<any>":
@@ -2811,13 +2865,14 @@ class VEY:
                         for i in self.Errors:
                             self.Errors[i] = False
                         code = self.prep_exec(block)
-                        self.exec_block(code, count)
+                        self.exec_block(code, count, fromcatch=True)
                     self.cnt = count - 1
                     self.og_c = eogc - 1
                 else:
+                    self.attempt -= 1 # this try/catch pair is done (even though it errored on an unknown catch name)
                     self.error(24, error_name)
                     return None
-                self.attempt = False
+                self.attempt -= 1 # leaving the attempt region this try opened; so the errors and messages out of try block will work again once we're back to depth 0
             else:
                 self.error(25)
                 return None
@@ -3284,14 +3339,13 @@ class VEY:
                     return
                 
                 if len(result) > 0:
-                    if isinstance(result[0], str) and not result[0].startswith("$<<"):
+                    if not isinstance(result[0], str):
                         self.variables = result[0]
                         if len(result) > 1:
                             self.cnt = result[1]          # only jumps for real (non-sentinel) results
                     else:
+                        result = list(result)
                         result[0] = result[0].strip()
-                        if result[0].startswith("$<<"):
-                            self.project_sse(result[0], types="library")
                         if result[0] == "$<<SELF EVAL>>":
                             self.eval_deb = not self.eval_deb
                         elif result[0] == "$<<DEBUGGED>>":
@@ -3311,10 +3365,11 @@ class VEY:
                                 self.debug = False
                                 self.adv_debug = True
                                 self.adv_debug_wait = wait_time
+                        elif result[0].startswith("$<<"):
+                            self.process_sse(result[0], types="library")
                 if "$<<new_path>>" in self.variables.keys():
                     self.path = self.variables["$<<new_path>>"]
                     del self.variables["$<<new_path>>"]
-                            
                 # libraries already access whatever is inside veyl, result is a dict
                 
         else:
@@ -3349,13 +3404,15 @@ class VEY:
         exact resolution checks used by the `call`-prefixed call handling,
         so a bare call is only recognized when `call` would have recognized it.
         """
-        if any(name.startswith(aa + ".") for aa in list(self.variables.keys())):
+        if "." in name and any(name.startswith(aa + ".") and any(a not in aa.split(".")[0].strip() for a in self.bim) for aa in list(self.variables.keys())):
             return True
         if any(name == a for a in list(self.class_callers.keys())):
             return True
-        if any(name.startswith(a) for a in list(self.classes.keys())):
+        if any(name.startswith(a + ".") for a in list(self.classes.keys())):
             return True
         if name in list(self.functions.keys()):
+            return True
+        if self.in_class[1] and name in self.classes[self.in_class[0]]["methods"].keys():
             return True
         if self.in_func:
             if self.is_priv and name in list(self.func_scope.keys()):
@@ -3373,7 +3430,8 @@ class VEY:
         instruction, run_method=False,
         dt="<any>", constant=False,
         new=False, token=None,
-        ismap=False, isexternal=False
+        ismap=False, isexternal=False,
+        fromsystem=False
         ):
         """
         Main Level 2 of parsing
@@ -3409,9 +3467,9 @@ class VEY:
         # test if it is an illegal SSE or variable name
         name_test = [left] if not isinstance(left, list) else left
         for n in name_test:
-            if n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal:
+            if n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal and not fromsystem:
                 self.error(115, n)
-            if any(fc in n for fc in self.forbiden_chars):
+            elif any(fc in n for fc in self.forbiden_chars) and not fromsystem:
                 self.error(116)
         
         if not isinstance(left, list):
@@ -3453,7 +3511,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            try:
+            if True:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3560,11 +3618,20 @@ class VEY:
                             name = self.eval(name[0], {}, self.variables) + "." + name[1]
                         except Exception:
                             name = arg[0]
-                    if any(name == a for a in list(self.class_callers.keys())) or any(name.startswith(a) for a in list(self.classes.keys())) or self.in_class[1] and main in self.special[self.in_class[0]]["variables"].keys():
+                    if any(name == a for a in list(self.class_callers.keys())) or any(name.startswith(a + ".") for a in list(self.classes.keys())) or self.in_class[1] and main in self.special[self.in_class[0]]["variables"].keys():
                         name = name.strip().rsplit(".", 1)
                         m_name = name[1]
                         self.traceback[m_name] = self.og_c
-                        if any(name[0].startswith(a) for a in list(self.class_callers.values())):
+                        isclass = False
+                        if name[0] in self.classes.keys():
+                            # a literal class name; a polymorph-resolved object
+                            # variable also resolves to its class's name here
+                            # (e.g. `obj.addAll(...)` -> "Adder.addAll"), so this
+                            # is only a true static/class-level call when it was
+                            # NOT reached by resolving an object variable
+                            isclass = not polymorph
+                            name = name[0]
+                        elif any(name[0].startswith(a) for a in list(self.class_callers.values())):
                             if polymorph:
                                 for i in list(self.class_callers.keys()):
                                     if self.class_callers[i] == name[0]:
@@ -3580,9 +3647,35 @@ class VEY:
                         args = [self.convert_arg(arg.strip()) for arg in args]
                         self.classes[name]["methods"][m_name]["end"] = self.cnt 
                         t = False if self.classes[name]["methods"][m_name]["type"] == "pub" else True
-                        isclass = True
                         called = True
-                        self.run_methods(name, m_name, True, object_name, args, t)
+                        if not isclass:
+                            self.run_methods(name, m_name, True, object_name, args, t)
+                        else:
+                            self.run_methods(name, m_name, False, None, args, t)
+                        if self.is_return:
+                            if isinstance(left, str):
+                                left = [left]
+                            for v, n in zip(self.return_val, left):
+                                self.variables[n] = v
+                            self.is_return = False
+                    elif self.in_class[1] and name in self.classes[self.in_class[0]]["methods"].keys():
+                        # runs class methods within the class itself
+                        m_name = name.strip()
+                        class_n = self.in_class[0]
+                        current_obj = self.in_class[2]  # None if running on the class itself (static), else the instance name
+                        classes = self.classes[class_n]
+                        args = self.special_split(arg[1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
+                        args = [self.convert_arg(arg.strip()) for arg in args]
+                        classes["methods"][m_name]["end"] = self.cnt
+                        self.traceback[m_name] = self.og_c
+                        called = True
+                        self.run_methods(
+                            class_n, m_name,
+                            current_obj is not None,
+                            current_obj if current_obj is not None else class_n,
+                            args, False,
+                            obj_name=current_obj
+                        )
                         if self.is_return:
                             if isinstance(left, str):
                                 left = [left]
@@ -3806,8 +3899,8 @@ class VEY:
                     self.functions[left] = arg
                     self.variables[left] = f"<veyl-function: {main}>"
                     return
-                # handles classes
-                elif main.startswith(tuple(self.classes.keys())):
+                # handles object instantiation
+                elif any(main.startswith(a + "(") for a in tuple(self.classes.keys())):
                     name = None
                     original = main
                     main = main.split("(", 1)[0].strip()
@@ -3901,16 +3994,16 @@ class VEY:
                         for var, val in zip(left, value):
                             self.variables[var] = val
                     else: self.variables[left] = value
-            except Exception as e:
-                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-                if isinstance(e, ZeroDivisionError):
-                    self.error(4)
-                    return None
-                if isinstance(e, MemoryError):
-                    self.error(7)
-                    return
-                self.error(6, right)
-                return None
+#            except Exception as e:
+#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+#                if isinstance(e, ZeroDivisionError):
+#                    self.error(4)
+#                    return None
+#                if isinstance(e, MemoryError):
+#                    self.error(7)
+#                    return
+#                self.error(6, right)
+#                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
@@ -3925,8 +4018,15 @@ class VEY:
         else:
             name = left
         for l in name:
-            if any(l in self.classes[vs]["variables"].keys() for vs in self.classes.keys()) and self.in_class[1]:
-                self.classes[self.in_class[0]]["variables"][l] = self.variables[l]
+            if self.in_class[1]:
+                if self.in_class[2] is not None:
+                    # running on an object instance - only that instance's
+                    # entry in self.objects may be updated, never the shared
+                    # class definition in self.classes
+                    if self.in_class[2] in self.objects and l in self.objects[self.in_class[2]]["variables"].keys():
+                        self.objects[self.in_class[2]]["variables"][l] = self.variables[l]
+                elif any(l in self.classes[vs]["variables"].keys() for vs in self.classes.keys()):
+                    self.classes[self.in_class[0]]["variables"][l] = self.variables[l]
             if self.constants[l][0] and self.constants[l][1] == None and l in self.variables.keys():
                 self.constants[l][1] = self.variables[l]
             elif self.constants[l][0] and self.constants[l][1] != None and l in self.variables.keys():
@@ -4308,7 +4408,7 @@ class VEY:
                             if self.class_callers[i] == name[0]:
                                 name = self.class_callers[i]
                     else: name = self.class_callers[name[0]]
-                else: name = self.in_class[0]
+                else: name = name[0]
                 if m_name not in self.classes[name]["methods"].keys():
                     self.error(64, m_name, name)
                     return
@@ -4319,9 +4419,32 @@ class VEY:
                 args = [self.convert_arg(arg.strip()) for arg in args]
                 self.classes[name]["methods"][m_name]["end"] = self.cnt 
                 t = False if self.classes[name]["methods"][m_name]["type"] == "pub" else True
+                isclass = object_name is None
+                called = True
+                self.run_methods(name, m_name, object_name is not None, object_name, args, t)
+                if self.is_return:
+                    for val in self.return_val:
+                        v += str(val) + " "
+                    self.is_return = False
+            elif self.in_class[1] and name in self.classes[self.in_class[0]]["methods"].keys():
+                # runs class methods within the class itself
+                m_name = name.strip()
+                class_n = self.in_class[0]
+                current_obj = self.in_class[2]  # None if running on the class itself (static), else the instance name
+                classes = self.classes[class_n]
+                args = arg[1].split(',')
+                args = [self.convert_arg(arg.strip()) for arg in args]
+                classes["methods"][m_name]["end"] = self.cnt
+                self.traceback[m_name] = self.og_c
                 isclass = True
                 called = True
-                self.run_methods(name, m_name, True, object_name, args, t)
+                self.run_methods(
+                    class_n, m_name,
+                    current_obj is not None,
+                    current_obj if current_obj is not None else class_n,
+                    args, False,
+                    obj_name=current_obj
+                )
                 if self.is_return:
                     for val in self.return_val:
                         v += str(val) + " "
@@ -4411,7 +4534,7 @@ class VEY:
                     for i in outputs:
                         conts += str(i) + " "
                     return conts
-                self.assign_variable(f"<<output>> = {content}")
+                self.assign_variable(f"<<output>> = {content}", fromsystem=True)
                 v = self.variables["<<output>>"]
                 del self.variables["<<output>>"]
                 if isinstance(content, str) and isinstance(v, tuple):
@@ -4422,8 +4545,15 @@ class VEY:
                     
                 return v
             except Exception as e:
+                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                if isinstance(e, ZeroDivisionError):
+                    self.error(4)
+                    return None
+                if isinstance(e, MemoryError):
+                    self.error(7)
+                    return
                 self.error(46, content)
-                return
+                return None
 
     def handle_class(self, line):
         insts = line[5:].strip()
@@ -4452,50 +4582,22 @@ class VEY:
                     self.classes[insts]["variables"].update(parent_const["variables"])
                     self.classes[insts]["variables"]["<dict>"].update(parent_const["variables"])
                     self.classes[insts]["variables"]["<attr>"].extend(list(parent_const["methods"].keys()))
-                    self.classes[insts]["variables"]["<attr>"].extend(list(parent_const["variables"].keys()))
-                        
-                        
+                    self.classes[insts]["variables"]["<attr>"].extend(list(parent_const["variables"].keys()))   
         self.special[insts] = {"variables": {}, "methods": {}, "access": False} # this stores class variable and method names here
-            
-        ogc = self.og_c
         block, count, eogc = self.get_block()
-        og_inst = self.Instructions
-        self.Instructions = block
-        og_cnt = count
-        self.cnt = 0
-        while self.cnt < len(block):
-            if block[self.cnt].endswith("{") and block[self.cnt].startswith("{"):
-                block[self.cnt] = block[self.cnt][:-1]
-            # static functions, public is static, where it is defined as a class method, while private is also a class method, but you can't directly call it outside of class'
-            if (block[self.cnt].startswith("public") or block[self.cnt].startswith("private")) and " func " in block[self.cnt]:
-                line = block[self.cnt][8:].strip() if block[self.cnt].startswith("private") else block[self.cnt][7:].strip()
-                if not any(line.startswith(a + " ") for a in self.datatypes) and line.startswith("func "):
-                    dtype = "<any>"
-                    line = line[5:].strip()
-                else:
-                    dtype = line.split(" ", 1)
-                    line = dtype[1][5:].strip()
-                    dtype = dtype[0].strip()
-                start = self.cnt
-                if line.endswith("{"): line = line[:-1].strip()
-                line = line.removesuffix(")")
-                arg = line.split('(') # removes the starting parenthensis and ending
-                func_name = arg[0]
-                func_arg = [a.strip() for a in arg[1].split(",")]
-                ogc2 = self.og_c
-                b, count, eogc2 = self.get_block()
-                self.classes[insts]["methods"][func_name] = {'block': b, 'args': func_arg, 'end': count, 'start': start, "ogc": ogc2, "end ogc": eogc2, "datatype": dtype, "type": "pub" if block[self.cnt].strip().startswith("public") else "priv"}
-                self.classes[insts]["variables"]["<attr>"].append(func_name)
-                self.special[insts]["methods"][func_name] = True
-                    
-                self.cnt = count - 1
-                self.og_c = eogc - 1
-            self.cnt += 1
-            self.og_c += 1
-        self.cnt = og_cnt - 1
+        code = self.prep_exec(block)
+        self.in_class = [insts, True, None, True]
+        self.exec_block(code, count, class_exec=True)
+        self.in_class = [None, False, None, False]
+        self.cnt = count - 1
         self.og_c = eogc - 1
-        self.Instructions = og_inst
         return insts
+    
+    def process_class_init(self):
+        self.classes[self.in_class[0]]["variables"].update(self.variables)
+        self.process_vars()
+        del self.variables
+        return
     
     def delete_target(self, arg):
         """
