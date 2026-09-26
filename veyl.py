@@ -27,7 +27,7 @@ if "VeylPL" not in system.path:
         pass
     try:
         import resolve_external
-    except ImportError() as e:
+    except ImportError as e:
         pass
     try:
         import veylIO
@@ -52,7 +52,7 @@ _UNSAFE = (
     # filesystem
     "open(",
     "'os'",
-    '"os"'
+    '"os"',
     "pathlib.",
     "shutil.",
 
@@ -3490,7 +3490,8 @@ class VEY:
         else:
             for l in left:
                 if l not in self.variables.keys() or new:
-                    self.constants[l] = [True, None]
+                    if l in self.constants:
+                        self.constants[l] = [True, None]
                 if l not in self.variable_info.keys() or new:
                     self.variable_info[l] = {
                         "datatype": dt,
@@ -3511,7 +3512,7 @@ class VEY:
                 pre_run = True
         def built_in_functions(left, main, right, method):
             libs = False
-            if True:
+            try:
                 if main in list(self.variables.keys()):
                     if main not in self.class_callers.keys():
                         self.variables[left] = self.variables[main]
@@ -3994,16 +3995,16 @@ class VEY:
                         for var, val in zip(left, value):
                             self.variables[var] = val
                     else: self.variables[left] = value
-#            except Exception as e:
-#                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
-#                if isinstance(e, ZeroDivisionError):
-#                    self.error(4)
-#                    return None
-#                if isinstance(e, MemoryError):
-#                    self.error(7)
-#                    return
-#                self.error(6, right)
-#                return None
+            except Exception as e:
+                # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                if isinstance(e, ZeroDivisionError):
+                    self.error(4)
+                    return None
+                if isinstance(e, MemoryError):
+                    self.error(7)
+                    return
+                self.error(6, right)
+                return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
             if val == "<<from_library>>":
@@ -4027,9 +4028,9 @@ class VEY:
                         self.objects[self.in_class[2]]["variables"][l] = self.variables[l]
                 elif any(l in self.classes[vs]["variables"].keys() for vs in self.classes.keys()):
                     self.classes[self.in_class[0]]["variables"][l] = self.variables[l]
-            if self.constants[l][0] and self.constants[l][1] == None and l in self.variables.keys():
+            if l in self.constants and self.constants[l][0] and self.constants[l][1] == None and l in self.variables.keys():
                 self.constants[l][1] = self.variables[l]
-            elif self.constants[l][0] and self.constants[l][1] != None and l in self.variables.keys():
+            elif l in self.constants and self.constants[l][0] and self.constants[l][1] != None and l in self.variables.keys():
                 self.constants[l][0] = False
             if dt != "<any>":
                 if ismap:
