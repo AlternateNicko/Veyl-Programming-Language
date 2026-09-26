@@ -470,11 +470,11 @@ class VEY:
         # where module_class is the class object of that library
         
         # CONFIGURATIONS
-        self.version = "1.0.7" # current version
+        self.version = "1.0.8" # current version
         self.version_info = {
             "major": 1,
             "minor": 0,
-            "micro": 7,
+            "micro": 8,
             "level": "final",
             "serial": 0
         }
