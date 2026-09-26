@@ -2823,8 +2823,11 @@ class VEY:
                 self.process_vars()
             
             elif instruction.startswith('func '):
-                # user define function
-                self.function_creation(instruction, types)
+                if not self.in_class[1]:
+                    # user define function
+                    self.function_creation(instruction, types)
+                else:
+                    self.function_creation(instruction, types, isclass=True)
             elif instruction.startswith(tuple(self.datatypes)):
                 self.datatype_keyword(instruction, types, isclass=True)
             elif instruction.startswith("class "):
