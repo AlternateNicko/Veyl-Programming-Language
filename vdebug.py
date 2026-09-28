@@ -8,17 +8,17 @@ class debug():
         if not self.debug:
             return
         
-        self.eps = code
+        self.vey = code
         print(f"\nDEB: [ functions: ")
-        if self.eps.functions:
-            for name in self.eps.functions:
+        if self.vey.functions:
+            for name in self.vey.functions:
                 print()
                 print(name)
-                for f in self.eps.functions[name]:
+                for f in self.vey.functions[name]:
                     if "block" in f:
                         print("code")
                         tabs = 0
-                        for i, c in enumerate(self.eps.functions[name][f]):
+                        for i, c in enumerate(self.vey.functions[name][f]):
                             if c.endswith("}") or c.startswith("}"):
                                 tabs -= 1
                             c = ("    " * tabs) + c
@@ -26,7 +26,7 @@ class debug():
                             if c.endswith("{") or c.startswith("{"):
                                 tabs += 1
                               
-                    else: print(f + ":", self.eps.functions[name][f])
+                    else: print(f + ":", self.vey.functions[name][f])
         print("]")
     
     
@@ -56,37 +56,37 @@ class debug():
     def print_classes(self, code):
         if not self.debug:
             return
-        self.eps = code
+        self.vey = code
         print("\nDEB: [ classes")
-        if self.eps.classes:
-            for name in self.eps.classes:
+        if self.vey.classes:
+            for name in self.vey.classes:
                 print(name)
-                for f in self.eps.classes[name]:
-                    print(self.eps.classes[name][f])
+                for f in self.vey.classes[name]:
+                    print(self.vey.classes[name][f])
         
-        if self.eps.objects:
-            for name in self.eps.objects:
+        if self.vey.objects:
+            for name in self.vey.objects:
                 print(name)
-                for f in self.eps.objects[name]:
-                    print(self.eps.objects[name][f])
+                for f in self.vey.objects[name]:
+                    print(self.vey.objects[name][f])
         print("]")
         
     def print_init(self, code):
         if not self.debug:
             return
-        self.eps = code
+        self.vey = code
         print(f"\n\n—Debug—————————————————————————————————————————————————————————\
-        \n DEB: [ File path: {self.eps.path / Path(self.eps.file_name).with_suffix(self.eps.file_extension)} ]\
+        \n DEB: [ File path: {self.vey.path / Path(self.vey.file_name).with_suffix(self.vey.file_extension)} ]\
         \nDEB: [ Variables:")
-        for i in self.eps.variables:
-            print(f"{'constant ' if self.eps.variable_info[i]['constant'] else 'variable '} {str(self.eps.constants[i][0]):<5} {str(self.types(self.eps.variables[i])):<5} {str(i)+':':<10}{str(self.eps.variables[i])}")
+        for i in self.vey.variables:
+            print(f"{'constant ' if self.vey.variable_info[i]['constant'] else 'variable '} {str(self.vey.constants[i][0]):<5} {str(self.types(self.vey.variables[i])):<5} {str(i)+':':<10}{str(self.vey.variables[i])}")
     
     def print_libraries(self, code):
         if not self.debug:
             return
-        self.eps = code
+        self.vey = code
         print("_______________________________________________________________")
         print("DEB: [ Libraries:\
         \nName       |Root library| module")
-        for imported, name in zip(self.eps.library, list(self.eps.library_name.values())):
-            print(f"{name:<10} | {imported:<10} | {None if imported not in list(self.eps.nplibs.keys()) else self.eps.nplibs[imported]}")
+        for imported, name in zip(self.vey.library, list(self.vey.library_name.values())):
+            print(f"{name:<10} | {imported:<10} | {None if imported not in list(self.vey.nplibs.keys()) else self.vey.nplibs[imported]}")
