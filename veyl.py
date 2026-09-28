@@ -8,6 +8,8 @@ import sys as system
 import time
 from pathlib import Path
 from tqdm import tqdm
+from itertools import zip_longest
+
 
 # this fix circular imports
 if "VeylPL" not in system.path:
@@ -34,6 +36,7 @@ if "VeylPL" not in system.path:
     except Exception as e:
         pass
 import veylIO
+
 _ASSIGN_FASTPATH_EXCLUDE = (
     '/<', 'output', 'ignore', 'quit()', 'inherit ', '<debug>',
     'load', 'break', 'continue', 'while', 'return', 'global', 'if', 'else',
@@ -158,6 +161,7 @@ class SafeEval(ast.NodeVisitor):
                 elif isinstance(operation, ast.NotIn):
                     if left in right:
                         return False
+                left = right
             return True
         elif isinstance(node, ast.List):
             return [self.visit(elt) for elt in node.elts]
@@ -317,23 +321,31 @@ class HashMap:
     Values can be changed, but must preserve their datatype.
     """
 
-    def __init__(self, key_type, value_type, values=None):
+    def __init__(self, key_type, value_type, vey, values=None):
         self.key_type = key_type
         self.value_type = value_type
         self._data = {}
+        self._vey = vey
+        self.initializing = False
 
         if values is not None:
+            self.initializing = True
             for key, value in values.items():
                 self[key] = value
+            self.initializing = False
 
-    def _check_key(self, key):
+    def _check_key(self, key, fromsetitem=False):
         if self.key_type is ANY:
-            return
+            return True
+        if not self.initializing and fromsetitem and key not in self._data:
+            self._vey.error(118, self._vey.Instructions[self._vey.cnt])
+            return False
         if not isinstance(key, self.key_type):
             raise TypeError(
                 f"hash map key must be {self.key_type.__name__}, "
                 f"got {type(key).__name__}"
             )
+        return True
     
     def _check_value(self, value):
         if self.value_type is ANY:
@@ -345,13 +357,18 @@ class HashMap:
             )
     
     def __setitem__(self, key, value):
-        self._check_key(key)
+        if not self._check_key(key, fromsetitem=True):
+            return
         self._check_value(value)
         self._data[key] = value
 
     def __getitem__(self, key):
         self._check_key(key)
         return self._data[key]
+    
+    def __delitem__(self, key):
+        self._vey.error(118, key)
+        return
 
     def __iter__(self):
         return iter(self._data)
@@ -470,15 +487,15 @@ class VEY:
         # where module_class is the class object of that library
         
         # CONFIGURATIONS
-        self.version = "1.0.8" # current version
+        self.version = "1.0.9" # current version
         self.version_info = {
             "major": 1,
             "minor": 0,
-            "micro": 8,
+            "micro": 9,
             "level": "final",
             "serial": 0
         }
-        self.cli_version = "0.9.0"
+        self.cli_version = "0.9.1"
         self.required_py_version = ">=3.8.0"
         self.program_version = "1.0.0" # your programs choice
         
@@ -516,7 +533,7 @@ class VEY:
         self.classes = {} # name: {methods: {method name: same as funcs}, variables: {name: value}, inheritence: [class name]
         self.og_c = 0 # the count, but the count where the pointer is pointingj at, and not changed by any parsing actions
         self.return_val = None # return value
-        self.return_type = None # return type
+        self.return_type = [] # return type stack (LIFO); depth is kept in sync with self.in_func
         self.output = {
             "<main>": [], # used for cache
         }
@@ -526,7 +543,8 @@ class VEY:
             "zip", "dict", "map", "isinstance", "check"
         ] # for eval to: know if the expression they are evaluating has the languages codes
         self.bim = ["cap", "low", "as", "rem", "strip", "split", "hasprefix", "hassuffix", "replace", "slice", "pop", "push", "read", "keys", "values", "items", "const",
-            "variable", "immutable", "mutable", "swap_case"
+            "variable", "immutable", "mutable", "swap_case",
+            "push", "freeze", "set", "push", "write", "extend", "update",
         ] # this one is for methods
         self.pbi = ["output", "quit", "exec"
         ] # this one is for plain built in functions
@@ -564,8 +582,6 @@ class VEY:
         # 0 is falsy and any positive int is truthy, so every existing `if self.attempt` /
         # `if not self.attempt` check elsewhere keeps working exactly as before.
         self.in_class = [None, False, None, False] # if the program is currently in a code, first index stores the name of the class, the second shows True if they are in a class, third is what class objecf it is (None if it's inside a class) else False
-        self.breaking = False # force break out loops
-        self.continuing = False # continues
         self.evals = False # if it's currently evaluating something
         self.is_return = False # for return
         self.eval_deb = False # for debug
@@ -577,6 +593,10 @@ class VEY:
         self.in_block = 0 # while exiting or skipping some if and else if statement, this turns true if it's inside a code block (code blocks startimg with { and ends with })
         self.exec_fl = 0 # if it's currently executing a loop (for loop or while loops)
         self.in_func = 0 # if it's currently inside a function
+        self.recursion_limit = 100 # veyl recursion limit
+        self.breaking = 0 # a stack counter that goes up for every loop that has been created, force breaks out of a loop
+        self.continuing = 0 # a stack counter that goes up for every loop that has been created, continues the loop, skiping the iteration turn
+        self.loop_stack = 0 # goes up for every while/for loops.
         
         # METADATA'S
         self.functions = {} # where all the functions get stored, their entire code blocks, starting line, ending line, local variables, and arguments
@@ -591,10 +611,11 @@ class VEY:
         self.private_classes = {} # For future uses
         self.variable_info = {} # variable datatype, constant, and protected infos
         self.original_var = [] # original variable once calling a new function, the self.variables are replace with a new dictionary, and original_var stores the global variables
+        self.recursion_md = {}
         self.cache = {
             "eval": {}, # for evaluation (v1.0.3)
-            "func": {}, # function cache
-            "class": {}, # class method cache
+            "func": {}, # function cache (NONE)
+            "class": {}, # class method cache (NONE)
             "cond": {}, # for conditions (v1.0.5)
         } # the cache, mostly use for memoization, func and classes still has no use for now
         self.objects = {} # for defined variables using class objects
@@ -641,7 +662,6 @@ class VEY:
             "<file>": self.file_name,
             "<variable>": self.variables,
             "<extension>": self.file_extension,
-            
         }
         
         
@@ -959,6 +979,7 @@ class VEY:
             if "[]" in expression:
                 self.error(74, expression)
                 return
+            return None
         self.evals = False
         evaluator = SafeEval(globals, locals)
         if from_lib: self.variables = past_vars
@@ -1026,9 +1047,15 @@ class VEY:
         if exp in self.cache["eval"].keys():
             change = True
             for v in self.cache["eval"][exp]["const"].keys():
-                if self.cache["eval"][exp]["const"][v][0] != self.constants[v][0]:
-                    change = False
-                    break
+                try:
+                    if self.cache["eval"][exp]["const"][v][0] != self.constants[v][0]:
+                        change = False
+                        break
+                    if v in self.variables and self.cache["eval"][exp]["const"][v][1] != self.variables.get(v):
+                        change = False
+                        break
+                except RecursionError:
+                    continue
             if change:
                 return self.cache["eval"][exp]
         
@@ -1136,6 +1163,9 @@ class VEY:
                     # Check for error
                     if True in self.Errors.values() and not self.attempt:
                         return
+                    if self.recursion_limit == len(self.traceback):
+                        self.error(78)
+                        return
                         
                     if self.cnt >= len(self.Instructions):
                         break # ends the program once the cnt reaches over the programs amount of line of code
@@ -1164,6 +1194,9 @@ class VEY:
         while True:
             # Check for error
             if True in self.Errors.values() and not self.attempt:
+                return
+            if self.recursion_limit == len(self.traceback):
+                self.error(78)
                 return
                 
             if self.cnt >= len(self.Instructions):
@@ -1197,12 +1230,16 @@ class VEY:
         was_in = True if self.in_func else False
         ogif = self.in_if
         self.Instructions = code.split("\n")
-        og_type = self.return_type
         og_var = self.variables.copy() if class_exec else False
         while self.cnt < len(self.Instructions):
             # Check for errors
-            if any(list(self.Errors.values())) and not fromcatch:
+            
+            if any(a for a in list(self.Errors.values())) and not fromcatch:
                 break
+            if self.recursion_limit == len(self.traceback):
+                print("IRN")
+                self.error(78)
+                return
             instruction = self.Instructions[self.cnt].strip()
             self.update_traceback()
             if self.debug or self.adv_debug:
@@ -1232,7 +1269,7 @@ class VEY:
             self.og_c += 1
             if self.hastqdm:
                 self.pbar.update(1)
-            if self.breaking or self.continuing:
+            if self.breaking < self.loop_stack or self.continuing < self.loop_stack:
                 break
             if self.in_func == 0 and was_in or self.is_return:
                 break
@@ -1241,7 +1278,6 @@ class VEY:
             if class_exec:
                 self.variables = og_var
         self.cnt = count
-        self.return_type = og_type
         self.in_if = ogif
         self.og_c = ogc
         self.Instructions = original
@@ -1397,7 +1433,8 @@ class VEY:
                 new_dict = sync_dict_values(vars)
                 self.sync_variables[gr]["group value"] = new_dict
                 self.sync_variables[gr]["all"] = new_dict
-                self.variables.update(new_dict)
+                if not new_dict is None:
+                    self.variables.update(new_dict)
             elif group["mode"] == "gva":
                 # host changes values by their group value
                 host = group["host"]
@@ -1511,10 +1548,19 @@ class VEY:
             return None
         except Exception as e:
             return args
-            
+    def _balance_lists_inplace(self, list1, list2):
+        max_len = max(len(list1), len(list2))
+        
+        # Extend shorter lists with None
+        list1.extend([None] * (max_len - len(list1)))
+        list2.extend([None] * (max_len - len(list2)))
+        
+        return list1, list2
+        
     def global_vars(self):
         globals = []
-        for g, l in zip(self.variables.keys(), self.original_var[-1].keys()):
+        lv, gv = self._balance_lists_inplace(list(self.variables.keys()), list(self.original_var[-1].keys()))
+        for g, l in zip(gv, lv):
             if g == l:
                 globals.append(g)
         for i in globals:
@@ -1560,7 +1606,7 @@ class VEY:
             tk = token
             key = self.dt_conversion[tk[0].strip()]
             val = self.dt_conversion[tk[1].strip()]
-            return HashMap(key, val, dict(value))
+            return HashMap(key, val, self, dict(value))
             
     def types(self, value, mode="p"):
         if mode == "p":
@@ -1745,12 +1791,15 @@ class VEY:
             result.append(current.strip())
         return result
         
-    def special_split(self, line, split_str, in_char1, in_char2, ret_capture_group=False, limit=None, ranges=[0, -1]):
+    def special_split(self, line, split_str, in_char1, in_char2, ret_capture_group=False, limit=None, ranges=None):
         """
     splits a string into a list by using split()
-    and only splits the characters that's outside of a specific character
-    like if it is outside ( and )
+    and only splits the characters that's outside of a delimeter or an encloser
+    e.g.: special_split("hello (hi) hi hello", "hi", ("("), (")")) returns ["hello (hi)", "hello"]
+    if ret_capture_group, then it would return ["hello (hi)", "hi", "hello"]
         """
+        if ranges is None:
+            ranges = [0, -1]
         start, end = ranges
         end = len(line) if end == -1 else end + 1
         line = line[start:end]
@@ -1795,7 +1844,7 @@ class VEY:
             return new_line.split("𐕣⸮ꙮ𒐫")
         return [new_line]
     
-    def special_find(self, line, target, in_char1, in_char2, ranges=[0, -1]):
+    def special_find(self, line, target, in_char1, in_char2, ranges=None):
         """
         This function works like special_split, but it returns True or False if target_str is in the string
         only if it exist, and is not inside the chosen characters (in_chars1 for the start and in_chars2 for the end)
@@ -1803,6 +1852,8 @@ class VEY:
     
         this function fixes the bug in self.eval() about running a built in method inside as an argument of an built in function (or even user defined)
         """
+        if ranges is None:
+            ranges = [0, -1]
         start, end = ranges
         if not (start == 0 and end == -1):
             end = len(line) if end == -1 else end + 1
@@ -1847,6 +1898,8 @@ class VEY:
         self.in_func += 1 # for nested function calls
         og_cond = self.is_priv
         og_cond1 = self.is_pub
+        og_loop_md = (self.breaking, self.continuing, self.loop_stack, self.exec_fl)
+        self.breaking, self.continuing, self.loop_stack, self.exec_fl = 0, 0, 0, 0
         
         if not infunc:
             block = self.functions[name]['block']
@@ -1855,7 +1908,7 @@ class VEY:
             arg = self.functions[name]['args']
             ogc = self.functions[name]['ogc']
             count_ogc = self.functions[name]['end ogc']
-            self.return_type = self.functions[name]["datatype"]
+            self.return_type.append(self.functions[name]["datatype"])
             self.is_pub = True
             self.is_priv = False
         else:
@@ -1865,25 +1918,38 @@ class VEY:
                 arg = self.func_scope[self.func_name]["functions"][name]['args']
                 ogc = self.func_scope[self.func_name]["functions"][name]['ogc']
                 count_ogc = self.func_scope[self.func_name]["functions"][name]['end ogc']
-                self.return_type = self.func_scope[self.og_fname]["functions"][name]["datatype"]
+                self.return_type.append(self.func_scope[self.og_fname]["functions"][name]["datatype"])
             else:
                 block = self.func_scope[self.og_fname]["functions"][name]['block']
                 count = self.func_scope[self.og_fname]["functions"][name]['end']
                 arg = self.func_scope[self.og_fname]["functions"][name]['args']
                 ogc = self.func_scope[self.og_fname]["functions"][name]['ogc']
                 count_ogc = self.func_scope[self.og_fname]["functions"][name]['end ogc']
-                self.return_type = self.func_scope[self.og_fname]["functions"][name]["datatype"]
+                self.return_type.append(self.func_scope[self.og_fname]["functions"][name]["datatype"])
             argument = provided_args
             self.is_priv = True
             self.is_pub = False
         self.cnt = 0
         self.og_c = ogc + 1
         point = self.cnt
-        if len(argument) > len(arg):
-            self.error(12, name, len(argument))
+        if len(argument) > len(arg) or len(argument) < len(arg):
+            if len(argument) > 0 and len(arg) > 0 and not (argument[0] == '' and arg[0] == ''):
+                self.error(12, name, len(argument), len(arg))
+                return None
         if '' in arg:
             del arg[0]
-        self.traceback[name] = [self.og_c, self.Instructions[self.cnt]]
+        
+        isrecursive = False
+        if name in self.recursion_md:
+            tname = self.recursion_md[name][0]
+            tname += "<" + str(self.recursion_md[name][1]) + ">"
+            self.traceback[tname] = [self.og_c, self.Instructions[self.cnt]]
+            self.recursion_md[name][1] += 1
+            isrecursive = True
+        else:
+            tname = name
+            self.traceback[tname] = [self.og_c, self.Instructions[self.cnt]]
+            self.recursion_md[tname] = [name, 0]
         self.original_var.append(self.variables.copy())
         self.variables = {}
         
@@ -1905,9 +1971,13 @@ class VEY:
                 types = n.split(">", 1)
                 n = types[1]
                 value = self.datatype_convert(value, types[0][1:].strip())
-                
+        
+            if isinstance(value, (list, dict, Array, Vector, HashMap)):
+                value = copy.deepcopy(value)
+        
             self.variables[n.strip()] = value
             self.constants[n.strip()] = [True, value]
+            
         self.process_vars()
         code = self.prep_exec(block)
         self.exec_block(code, count)
@@ -1915,6 +1985,8 @@ class VEY:
         self.variables = self.original_var.pop()
         self.variables.update(self.public)
         self.in_func -= 1
+        if self.return_type:
+            self.return_type.pop()
         if infunc:
             if self.func_name in self.func_scope.keys():
                 self.func_scope[self.func_name]["variables"] = self.variables.copy()
@@ -1928,7 +2000,10 @@ class VEY:
         self.og_c = count_ogc
         self.is_priv = og_cond
         self.is_pub = og_cond1
-        del self.traceback[name]
+        self.breaking, self.continuing, self.loop_stack, self.exec_fl = og_loop_md
+        if isrecursive:
+            self.recursion_md[name][1] -= 1
+        del self.traceback[tname]
         return
         
     def run_methods(self, name, m_name, object, object_name, provided_args, infunc, obj_name=None):
@@ -1941,16 +2016,32 @@ class VEY:
         arg = self.classes[name]["methods"][m_name]['args'].copy()
         ogc = self.classes[name]["methods"][m_name]['ogc']
         count_ogc = self.classes[name]["methods"][m_name]['end ogc']
-        self.return_type = self.classes[name]["methods"][m_name]["datatype"]
+        self.return_type.append(self.classes[name]["methods"][m_name]["datatype"])
         argument = provided_args
         self.special[name]["access"] = True
         self.cnt = 0
         self.og_c = ogc + 1
         self.func_name = name
         point = self.cnt
-        if len(argument) > len(arg):
-            self.error(13, m_name, len(arg), len(argument))
+        og_loop_md = (self.breaking, self.continuing, self.loop_stack, self.exec_fl)
+        self.breaking, self.continuing, self.loop_stack, self.exec_fl = 0, 0, 0, 0
+        if len(argument) > len(arg) or len(argument) < len(arg):
+            if len(argument) > 0 and len(arg) > 0 and not (argument[0] == '' and arg[0] == ''):
+                self.error(13, m_name, len(arg), len(argument))
+                return None
         self.traceback[m_name] = self.og_c
+        isrecursive = False
+        if m_name in self.recursion_md:
+            tname = self.recursion_md[m_name][0]
+            tname += "<" + str(self.recursion_md[m_name][1]) + ">"
+            self.traceback[tname] = [self.og_c, self.Instructions[self.cnt]]
+            self.recursion_md[m_name][1] += 1
+            isrecursive = True
+        else:
+            tname = m_name
+            self.traceback[tname] = [self.og_c, self.Instructions[self.cnt]]
+            self.recursion_md[tname] = [name, 0]
+            
         self.original_var.append(self.variables.copy())
         og_var = self.variables.copy()
         self.variables = {}
@@ -1977,6 +2068,14 @@ class VEY:
         self.in_func += 1
         original_inst = self.Instructions
         for value, n in zip(argument, arg):
+            if n.startswith("<"):
+                types = n.split(">", 1)
+                n = types[1]
+                value = self.datatype_convert(value, types[0][1:].strip())
+        
+            if isinstance(value, (list, dict, Array, Vector, HashMap)):
+                value = copy.deepcopy(value)
+        
             self.variables[n.strip()] = value
             if object:
                 self.objects[object_name]["variables"][n.strip()] = value
@@ -1998,6 +2097,8 @@ class VEY:
             self.variables.update(og_var)
             self.Instructions = original_inst
             self.cnt = count
+            if self.return_type:
+                self.return_type.pop()
             return self.return_val
         self.func_name = og_name
         self.og_fname = past_name
@@ -2006,13 +2107,18 @@ class VEY:
         self.variables = self.original_var.pop()
         self.variables.update(og_var)
         self.in_func -= 1
+        if self.return_type:
+            self.return_type.pop()
         if self.in_func <= 0:
             self.in_class = [None, False, None, None]
         self.Instructions = original_inst
         self.cache = og_cache
         self.cnt = count
         self.og_c = count_ogc
-        if name in self.traceback:
+        self.breaking, self.continuing, self.loop_stack, self.exec_fl = og_loop_md
+        if tname in self.traceback:
+            if isrecursive:
+                self.recursion_md[m_name][1] -= 1
             del self.traceback[m_name]
         return
     
@@ -2073,6 +2179,9 @@ class VEY:
         `addr_chain` is a list of one or more raw (unevaluated) index/key
         expressions, evaluated left to right as we walk into the structure.
         """
+        if name in self.variable_info and self.variable_info[name]["constant"]:
+            self.error(117)
+            return
         var = self.variables[name]
         value = self.eval(value, {}, self.variables)
         evaluated_addrs = [self.eval(a, {}, self.variables) for a in addr_chain]
@@ -2266,7 +2375,7 @@ class VEY:
 
         elif instruction.startswith(('{', '}')): pass # because it may be a peice of a code block
                     
-        elif instruction.startswith('pass') and not syntax_type in ["assignment", "function"]:
+        elif instruction == 'pass' and not syntax_type in ["assignment", "function"]:
             return # passes instructions, usefull for placeholders
         
         elif (instruction + "(").startswith(tuple(self.pbi)):
@@ -2365,20 +2474,20 @@ class VEY:
             else:
                 self.load(name, addr_chain, value)
         
-        elif instruction.startswith("break") and not syntax_type in ["assignment", "function"]:
+        elif instruction.strip() == "break" and not syntax_type in ["assignment", "function"]:
             # breaks out of a loop
             if self.exec_fl <= 0:
                 self.error(19)
                 return None
-            self.breaking = True
+            self.breaking -= 1
             return
             
-        elif instruction.startswith('continue') and not syntax_type in ["assignment", "function"]:
+        elif instruction.strip() == 'continue' and not syntax_type in ["assignment", "function"]:
             # continues the loop, in a loop
             if self.exec_fl <= 0:
                 self.error(20)
                 return None
-            self.continuing = True
+            self.continuing -= 1
             return
             
         elif instruction.startswith('while '):
@@ -2397,21 +2506,33 @@ class VEY:
             ogc = self.og_c
             block, count, eogc = self.get_block()
             condition = instruction[6:-1] if instruction.endswith('{') else instruction[6:]
-            self.exec_fl += 1
             try:
                 error_testing = self.run_condition(condition)
             except Exception:
                 self.error(86)
                 return
+            self.exec_fl += 1
+            self.loop_stack += 1
+            self.continuing += 1
+            self.breaking += 1
             while self.run_condition(condition):
+                if any(a for a in list(self.Errors.values())):
+                    break
                 self.og_c = ogc
                 code = self.prep_exec(block)
                 self.exec_block(code, count)
-                if self.breaking:
-                    self.breaking = False
+                if self.continuing < self.loop_stack:
+                    self.continuing += 1
+                    continue
+                if self.breaking < self.loop_stack:
+                    self.loop_stack -= 1
+                    self.continuing -= 1
                     break
                     
             self.exec_fl -= 1
+            self.loop_stack -= 1
+            self.breaking -= 1
+            self.continuing -= 1
             self.cnt = count
             self.og_c = eogc
         
@@ -2432,10 +2553,10 @@ class VEY:
             v = []
             for var in arg:
                 value = self.eval(var, {}, self.variables)
-                if self.return_type is None:
+                if not self.return_type:
                     v.append(value)
                     continue
-                rt = self.return_type
+                rt = self.return_type[-1]
                 if rt != "<any>":
                     value = self.datatype_convert(value, rt)
                 v.append(value)
@@ -2650,8 +2771,13 @@ class VEY:
             islist = isinstance(arg, list)
             ogc = self.og_c
             block, count, eogc = self.get_block()
+            self.loop_stack += 1
             self.exec_fl += 1
+            self.continuing += 1
+            self.breaking += 1
             for cnt, val in enumerate(iterable):
+                if any(a for a in list(self.Errors.values())):
+                    break
                 if not islist:
                     self.variables[arg] = val
                 else:
@@ -2661,10 +2787,17 @@ class VEY:
                 self.og_c = ogc
                 code = self.prep_exec(block)
                 self.exec_block(code, count)
-                if self.breaking:
-                    self.breaking = False
+                if self.continuing < self.loop_stack:
+                    self.continuing += 1
+                    continue
+                if self.breaking < self.loop_stack:
+                    self.loop_stack -= 1
+                    self.continuing -= 1
                     break
-            self.exec_fl -= 1 
+            self.exec_fl -= 1
+            self.loop_stack -= 1
+            self.breaking -= 1
+            self.continuing -= 1
             self.cnt = count - 1
             self.og_c = eogc - 1
         
@@ -2688,6 +2821,7 @@ class VEY:
                     name = self.eval(name[0], {}, self.variables) + "." + name[1]
                 except Exception:
                     name = arg[0]
+                    
             if any(name == a for a in list(self.class_callers.keys())) or any(name.startswith(a) for a in list(self.classes.keys())):
                 name = name.strip().split(".")
                 m_name = name[1]
@@ -2713,6 +2847,9 @@ class VEY:
                 called = True
                 self.run_methods(name, m_name, object_name is not None, object_name, args, False)
                 self.variables = og
+                if self.is_return:
+                    self.is_return = False
+                    self.return_val = None
             
             elif self.in_class[1] and name in self.classes[self.in_class[0]]["methods"].keys():
                 # runs class methods within the class itself
@@ -2731,6 +2868,9 @@ class VEY:
                     args, False,
                     obj_name=current_obj
                 )
+                if self.is_return:
+                    self.is_return = False
+                    self.return_val = None
                 
             elif name in list(self.functions.keys()):
                 a = self.special_split(arg[1], ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
@@ -2739,6 +2879,9 @@ class VEY:
                 self.functions[name]['end ogc'] = self.og_c
                 called = True
                 self.run_functions(name, a, False)
+                if self.is_return:
+                    self.is_return = False
+                    self.return_val = None
                 
             elif self.in_func:
                 if self.is_priv and name in list(self.func_scope.keys()) or self.is_pub and self.func_name in list(self.func_scope.keys()):
@@ -2756,6 +2899,10 @@ class VEY:
                     self.run_functions(name, a, True)
                     self.cnt = ending
                     self.og_c = end_ogc
+                if self.is_return:
+                    self.is_return = False
+                    self.return_val = None
+                    
             if not called:
                 # nothing matched this name as a class, class-method, or function
                 name_str = name if isinstance(name, str) else ".".join(name)
@@ -2781,9 +2928,11 @@ class VEY:
             if instruction.startswith("private"):
                 instruction = instruction[8:].strip()
                 types = "priv"
+                
             # Function or variables
             if instruction.startswith(tuple(self.datatypes)):
                 self.datatype_keyword(instruction, types)
+                
             if not instruction.startswith("func ") and "=" in instruction: # meaning it's a variable assignment
                 arg = instruction.split("=", 1)
                 name = arg[0].strip()
@@ -2813,7 +2962,7 @@ class VEY:
                     if not self.in_class[3]:
                         self.special[self.in_class[0]]["variables"][name] = True
                     else:
-                        self.classes[self.in_class[0]][""]
+                        self.classes[self.in_class[0]]["variables"][name] = self.variables[name]
                 elif types == "priv" and self.in_class[1]:
                     self.special[self.in_class[0]]["variables"][name] = False
                 elif types == "pub":
@@ -2835,7 +2984,7 @@ class VEY:
                 if types == "priv":
                     self.private_classes[name] = self.classes[name]
         # error handling keywords
-        elif instruction.startswith("try "):
+        elif instruction.startswith("try ") and not syntax_type in ["assignment", "function"]:
             # error handling by catching errors, with throw and catch
             block, count, eogc = self.get_block()
             self.attempt += 1 # entering an attempt region; nested tries just add to the depth
@@ -2845,7 +2994,7 @@ class VEY:
             self.og_c = eogc - 1
             return
         
-        elif instruction.startswith('catch '): # Catching Errors
+        elif instruction.startswith('catch ') and not syntax_type in ["assignment", "function"]: # Catching Errors
             if self.attempt:
                 new_name = []
                 error_name = instruction[5:-1].strip() if instruction.endswith('{') else instruction[5:]
@@ -2853,6 +3002,7 @@ class VEY:
                 for letter in error_name:
                     if letter != " ":
                         new_name.append(letter)
+                        
                 error_name = "".join(new_name)
                 block, count, eogc = self.get_block()
                 if error_name in self.Errors.keys():
@@ -2880,7 +3030,7 @@ class VEY:
                 self.error(25)
                 return None
                 
-        elif instruction.startswith("throw"):
+        elif instruction.startswith("throw ") and not syntax_type in ["assignment", "function"]:
             args = instruction[6:].strip().split("(", 1)
             name = args[0].strip()
             output = "output(" + args[1].strip()
@@ -2904,7 +3054,7 @@ class VEY:
                 self.error(27)
                 return None
                 
-        elif instruction.startswith("import"):
+        elif instruction.startswith("import ") and not syntax_type in ["assignment", "function"]:
             args = instruction[6:].strip().split(",")
             for lib in args:
                 has_get = True if " get " in lib else False
@@ -2941,6 +3091,7 @@ class VEY:
                     else:
                         pass # some built in libraries have its own functions and methods
                     continue
+                    
                 if Path(self.path / Path(lib.replace(".", "/")).with_suffix(".vey")).exists():
                     # execute .vey and get variables, functions, and methods
                     # types of imports -
@@ -2948,7 +3099,7 @@ class VEY:
                     # import directory.file_vey <- imports code
                     # import file_vey get func_or_class <- imports a function or class instead of the whole code
                     types = "dir" if "." in lib else "cwd"
-                    path = str(self.path)
+                    path = self.path
                     if types == "dir":
                         # get directory
                         pathp = path / Path(lib.replace(".", "/")).with_suffix(".vey")
@@ -3049,14 +3200,14 @@ class VEY:
                     self.objects.update(objects)
                     self.variable_info.update(variable_info)
                     self.class_callers.update(class_callers)
-                    self.public.update(class_callers)
-                    self.private_classes.update(private_classes)
+                    self.public.update(public)
+                    self.private_classes.update(private_c)
                     self.process_vars()
                 else:
                     self.error(29, lib)
                     return
                     
-        elif instruction.startswith("rename"):
+        elif instruction.startswith("rename ") and not syntax_type in ["assignment", "function"]:
             # rename variables and libraries
             if " as " not in instruction:
                 self.error(30, instruction.strip())
@@ -3077,26 +3228,36 @@ class VEY:
                     del self.functions[name]
             elif name in self.objects.keys():
                 self.objects[rename] = self.objects[name].copy()
-                self.special[rename] = self.special[name].copy()
+                if name in self.special:
+                    self.special[rename] = self.special[name].copy()
                 if name != rename:
                     del self.objects[name]
-                    del self.special[name]
+                    if name in self.special:
+                        del self.special[name]
             elif name in self.classes.keys():
                 self.classes[rename] = self.classes[name].copy()
                 if name != rename:
                     del self.classes[name]
             elif name in self.variables.keys():
                 self.variables[rename] = self.variables[name]
+                self.variable_info[rename] = self.variable_info[name]
+                self.constants[rename] = self.variable_info[name]
+                if name in self.public:
+                    self.public[rename] = self.public[name]
                 if name != rename:
-                    del self.variables[name] # so it doesn't delete the variable
+                    del self.variables[name]
+                    del self.variable_info[name]
+                    del self.constants[rename]
+                    if name in self.public:
+                        del self.public[name]
         
-        elif instruction.startswith("delete"):
+        elif instruction.startswith("delete ") and not syntax_type in ["assignment", "function"]:
             arg = instruction[7:].strip()
             targets = self.special_split(arg, ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
             for target in targets:
                 self.delete_target(target.strip())
                 
-        elif instruction.startswith("sync"):
+        elif instruction.startswith("sync ") and not syntax_type in ["assignment", "function"]:
             # syncronizes variables
             # sync mode host_var with *group_varA, group_varB
             args = instruction[4:].strip()
@@ -3138,14 +3299,17 @@ class VEY:
                 for var in groups:
                     variables[var] = self.variables[host]
                 self.variables.update(variables)
+                if mode == "ota":
+                    del self.sync_variables[host]
+                    self.process_vars()
+                    return
                 self.sync_variables[host]["group value"].update(variables)
                 self.sync_variables[host]["past group value"].update(variables)
                 self.sync_variables[host]["all"].update(variables)
-
             # the rest of the modes is processed through self.process_vars()
             self.process_vars()
         
-        elif instruction.startswith('desync'):
+        elif instruction.startswith('desync ') and not syntax_type in ["assignment", "function"]:
             args = instruction[7:].strip()
             values = args.split(" from ")
             host = values[1].strip()
@@ -3162,10 +3326,10 @@ class VEY:
                 del self.sync_variables[host]["group value"][vars]
                 del self.sync_variables[host]["all"][vars]
             
-        elif instruction.startswith('class'):
+        elif instruction.startswith('class ') and not syntax_type in ["assignment", "function"]:
             self.handle_class(instruction)
             
-        elif instruction.startswith("open"):
+        elif instruction.startswith("open ") and not syntax_type in ["assignment", "function"]:
             # example: open file.type as read name
             insts = instruction[5:].split(" ", 1)
             file = insts[0].strip()
@@ -3232,7 +3396,7 @@ class VEY:
                     # map <key: type, value: vector int *
                     
                     ismap = True
-                    keyword = keyword.split(">", 1)
+                    keyword = keyword.rsplit(">", 1)
                     instruction = keyword[1].strip()
                     if keyword[0].startswith("<"):
                         tk = keyword[0][1:].strip().split(",")
@@ -3264,6 +3428,9 @@ class VEY:
                     if not isinstance(self.variables[name], (list, Vector)):
                         self.error(50)
                         return None
+                    if name in self.variable_info and self.variable_info[name]["constant"]:
+                        self.error(117)
+                        return None
                     else:
                         if args:
                             try:
@@ -3275,11 +3442,17 @@ class VEY:
                     if not isinstance(self.variables[name], set):
                         self.error(52)
                         return None
+                    if name in self.variable_info and self.variable_info[name]["constant"]:
+                        self.error(117)
+                        return
                     self.variables[name] = frozenset(self.variables[name])
                 elif func[cnt].startswith('set(') and func[cnt].endswith(')'):
                     if not isinstance(self.variables[name], set):
                         self.error(53, name, self.variables[name])
                         return None
+                    if name in self.variable_info and self.variable_info[name]["constant"]:
+                        self.error(117)
+                        return
                     self.variables[name] = set(self.variables[name])
                 elif func[cnt].startswith("close(") and func[cnt].endswith(")"):
                     if not isinstance(self.variables[name], _io.TextIOWrapper):
@@ -3295,8 +3468,11 @@ class VEY:
                     value = self.eval(arg, {}, self.variables)
                     self.variables[name].write(value)
                 elif func[cnt].startswith("extend(") and func[cnt].endswith(")"):
-                    if not isinstance(self.variables[name], list):
+                    if not isinstance(self.variables[name], (list, Vector)):
                         self.error(61, self.variables[name])
+                        return
+                    if name in self.variable_info and self.variable_info[name]["constant"]:
+                        self.error(117)
                         return
                     arg = func[cnt][7:-1].strip()
                     value = self.eval(arg, {}, self.variables)
@@ -3304,11 +3480,15 @@ class VEY:
                 elif func[cnt].startswith("update(") and func[cnt].endswith(")"):
                     if not isinstance(self.variables[name], dict):
                         self.error(101, "[dict].update()", "dict", self.types(self.variables[name], "c"))
+                        return
+                    if name in self.variable_info and self.variable_info[name]["constant"]:
+                        self.error(117)
+                        return
                     arg = func[cnt][7:-1].strip()
                     value = self.eval(arg, {}, self.variables)
                     self.variables[name].update(value)
                 cnt += 1
-            if self.libraries:
+            if self.library:
                 if any(instruction.strip().startswith(self.library_name[l] + ".") and l in self.library for l in self.nplibs.keys()):
                     struct = instruction.split(".", 1)
                     key = self.name_library[struct[0]]
@@ -3408,6 +3588,9 @@ class VEY:
         so a bare call is only recognized when `call` would have recognized it.
         """
         if "." in name and any(name.startswith(aa + ".") and any(a not in aa.split(".")[0].strip() for a in self.bim) for aa in list(self.variables.keys())):
+            l, r = tuple(name.split(".", 1))
+            if any(r == a or a in r or r.startswith(a) for a in self.bim):
+                return False
             return True
         if any(name == a for a in list(self.class_callers.keys())):
             return True
@@ -3467,12 +3650,14 @@ class VEY:
             left = l[0]
         else:
             left = l # full list instead
+            
         # test if it is an illegal SSE or variable name
         name_test = [left] if not isinstance(left, list) else left
+        extra_forbids = ["[", "(", "{", "]", ")", "}"]
         for n in name_test:
             if n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal and not fromsystem:
                 self.error(115, n)
-            elif any(fc in n for fc in self.forbiden_chars) and not fromsystem:
+            elif any(fc in n for fc in self.forbiden_chars + extra_forbids) and not fromsystem:
                 self.error(116)
         
         if not isinstance(left, list):
@@ -3507,12 +3692,14 @@ class VEY:
                         if not self.attempt:
                             self.error(93, l)
                             return
+                            
         pre_run = False
         # runs self.eval if it includes arithmetics
         if not self.evals and any(operator in main for operator in ["+", "-", "/", "*", "%"]):
             if self.special_find(main, ["+", "-", "*", "/", "%"], ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
                 self.variables[left] = self.eval(main, {}, self.variables)
                 pre_run = True
+                
         def built_in_functions(left, main, right, method):
             libs = False
             try:
@@ -3558,7 +3745,7 @@ class VEY:
                         value = self.eval(arg.strip(), {}, self.variables)
                     except Exception as e:
                         return None
-                    if value or value in [[], (), {}]:
+                    if value or value in [[], (), {}, "", 0]:
                         self.variables[left] = len(value)
                     return
                 elif main.startswith('range('):
@@ -3737,7 +3924,7 @@ class VEY:
                     
                     return
                 elif main.startswith('sort('):
-                    arg = main[5:-1].split(',')
+                    arg = self.special_split(main[5:-1].strip(), ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"), limit=1)
                     reverse = self.eval(arg[1].strip(), {}, self.variables) if len(arg) == 2 else False
                     if not isinstance(reverse, bool):
                         self.error(38)
@@ -3747,8 +3934,11 @@ class VEY:
                     if len(arg) > 2:
                         self.error(39, len(arg))
                         return
-                    elif isinstance(arg, list):
-                        if isinstance(name, list) and len(arg) == 2 or reverse or not reverse:
+                    elif isinstance(name, (list, Vector)):
+                        if any(not isinstance(a, (int, float)) for a in name):
+                            self.error(122, "sort")
+                            return
+                        if isinstance(name, list):
                             if not reverse:
                                 self.variables[left] = sorted(name)
                             elif reverse:
@@ -3761,17 +3951,23 @@ class VEY:
                     return
                 elif main.startswith("mean("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, list):
+                    if not isinstance(arg, (list, Array, tuple Vector)):
                         self.error(41, arg)
                         return None
+                    if any(not isinstance(a, (int, float)) for a in arg):
+                        self.error(122, "mean")
+                        return
                     val = sum(arg)
                     self.variables[left] = val / len(arg)
                     return
                 elif main.startswith("median("):
                     arg = self.eval(main[7:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, list):
+                    if not isinstance(arg, (list, Array, tuple Vector)):
                         self.error(41, arg)
                         return None
+                    if any(not isinstance(a, (int, float)) for a in arg):
+                        self.error(122, "median")
+                        return
                     lists = sorted(arg)
                     length = len(lists) / 2
                     if not str(length).endswith(".5"):
@@ -3785,33 +3981,48 @@ class VEY:
                     return
                 elif main.startswith("mode("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, list):
+                    if not isinstance(arg, (list, Array, tuple Vector)):
                         self.error(41, arg)
                         return None
+                    if any(not isinstance(a, (int, float)) for a in arg):
+                        self.error(122, "mode")
+                        return
                     counts = {}
                     for i in arg:
-                        counts[str(i)] = 0
+                        counts[i] = 0
                     for i in arg:
-                        counts[str(i)] += 1
+                        counts[i] += 1
                     highest = 0
-                    for i in counts:
-                        if int(counts[str(i)]) >= int(highest):
-                            highest = i
+                    highester = None
+                    for i in counts.keys():
+                        if counts[i] == highest and not isinstance(highester, list):
+                            highester = [highester, i]
+                        elif counts[i] == highest and isinstance(highester, list):
+                            highester.append(i)
+                        elif counts[i] > highest:
+                            highester = i
+                            highest = counts[i]
                             
-                    self.variables[left] = highest
+                    self.variables[left] = highester
                     return
                 elif main.startswith("sum("):
                     arg = self.eval(main[4:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, list):
+                    if not isinstance(arg, (list, Array, tuple Vector)):
                         self.error(41, arg)
                         return None
+                    if any(not isinstance(a, (int, float)) for a in arg):
+                        self.error(122, "sum")
+                        return
                     self.variables[left] = sum(arg)
                     return
                 elif main.startswith("max("):
                     arg = main[4:-1].strip().split(",", 1)
                     value = self.eval(arg[0], {}, self.variables)
                     if len(arg) == 2:
-                        self.variables[left] = max(value, default=arg[1])
+                        try:
+                            self.variables[left] = max(value, default=self.eval(arg[1].strip(), {}, self.variables))
+                        except Exception:
+                            self.error(121, "max", arg[1])
                     else:
                         self.variables[left] = max(value)
                     return
@@ -3819,7 +4030,10 @@ class VEY:
                     arg = main[4:-1].strip().split(",", 1)
                     value = self.eval(arg[0].strip(), {}, self.variables)
                     if len(arg) == 2:
-                        self.variables[left] = min(value, default=arg[1])
+                        try:
+                            self.variables[left] = min(value, default=self.eval(arg[1].strip(), {}, self.variables))
+                        except Exception:
+                            self.error(121, "min", arg[1])
                     else:
                         self.variables[left] = min(value)
                     return
@@ -3827,7 +4041,10 @@ class VEY:
                 elif main.startswith("reverse("):
                     arg = main[8:-1].strip()
                     value = self.eval(arg, {}, self.variables)
-                    self.variables[left] = value[::-1]
+                    try:
+                        self.variables[left] = value[::-1]
+                    except Exception:
+                        self.error(120, value)
                     return
                 
                 elif main.startswith("type("):
@@ -3844,11 +4061,14 @@ class VEY:
                     arg = self.special_split(main[4:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                     new_list = []
                     for value in arg:
-                        new_list.append(self.eval(value.strip(), {}, self.variables))
+                        val = self.eval(value.strip(), {}, self.variables)
+                        if not isinstance(val, (list, Array, Vector, tuple)):
+                            self.error(119, type(val).__name__)
+                        new_list.append(val)
                     self.variables[left] = list(zip(*new_list))
                     return
                 elif main.startswith("hashmap("):
-                    arg = self.special_split(main[5:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
+                    arg = self.special_split(main[8:-1].strip(), ",", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                     if len(arg) < 2:
                         self.error(42, len(arg))
                         return None
@@ -3883,8 +4103,12 @@ class VEY:
                     else:
                         try:
                             datatype = self.eval(given_type, {}, self.variables)
-                        except Exception:
-                            self.error(99, given_type)
+                        except Exception as e:
+                            try:
+                                datatype = self.eval(given_type)
+                            except Exception as e:
+                                self.error(99, given_type)
+                                return
                     
                     if not isinstance(datatype, type) and datatype.startswith("<class_name>"):
                         dt = given_type
@@ -3911,9 +4135,10 @@ class VEY:
                     for i in self.classes.keys():
                         if i == main:
                             name = i
-                    main = original
                     if name is None:
-                        self.error(6, right)
+                        self.error(62, main)
+                        return
+                    main = original
                     self.objects[left] = {
                         "variables": {k: copy.deepcopy(v) for k, v in self.classes[name]["variables"].items()},
                         "instance": name,
@@ -4005,6 +4230,9 @@ class VEY:
                     return None
                 if isinstance(e, MemoryError):
                     self.error(7)
+                    return
+                if isinstance(e, NameError):
+                    self.error(18, main)
                     return
                 self.error(6, right)
                 return None
@@ -4099,23 +4327,23 @@ class VEY:
                                 elif args in ['flt', 'float']:
                                     self.variables[left] = float(self.variables[name])
                                     return
-                                elif 'bool' in args:
+                                elif 'bool' == args:
                                     self.variables[left] = bool(self.variables[name])
                                     return
-                                elif "list" in args:
+                                elif "list" == args:
                                     self.variables[left] = list(self.variables[name])
                                     return
-                                elif "tuple" in args:
+                                elif "tuple" == args:
                                     self.variables[left] = tuple(self.variables[name])
                                     return
-                                elif "set" in args:
+                                elif "set" == args:
                                     self.variables[left] = set(self.variables[name])
                                     return
-                                elif "map" in args and len(params) == 1:
-                                    self.variables[left] = dict(sefl.variables[name])
+                                elif "map" == args and len(params) == 1:
+                                    self.variables[left] = dict(self.variables[name])
                                     return
                                 # these ones now requires arguments
-                                elif "array" in args:
+                                elif "array" == args:
                                     if len(params) < 2:
                                         self.error(110)
                                         return
@@ -4124,7 +4352,7 @@ class VEY:
                                     else:
                                         params[1] = self.eval(params[1].strip(), {}, self.variables, from_isinstance=True)
                                     self.variables[left] = Array(params[1], self.variables[name])
-                                elif "vector" in args:
+                                elif "vector" == args:
                                     if len(params) < 2:
                                         self.error(111)
                                         return
@@ -4133,7 +4361,7 @@ class VEY:
                                     else:
                                         params[1] = self.eval(params[1].strip(), {}, self.variables, from_isinstance=True)
                                     self.variables[left] = Vector(params[1], self.variables[name])
-                                elif  "map" in args:
+                                elif  "map" == args:
                                     if len(params) < 2:
                                         self.error(112)
                                         return
@@ -4148,7 +4376,7 @@ class VEY:
                                         params[2] = self.dt_conversion[params[2].strip()]
                                     else:
                                         params[2] = self.eval(params[2].strip(), {}, self.variables, from_isinstance=True)
-                                    self.variables[left] = HashMap(params[1], params[2], self.variables[name])
+                                    self.variables[left] = HashMap(params[1], params[2], self, self.variables[name])
                                 else:
                                     self.error(57, type(args))
                                     return
@@ -4166,9 +4394,9 @@ class VEY:
                         return
                     elif var_func[cnt].startswith("strip(") and var_func[cnt].endswith(")"):
                         argu = var_func[cnt][6:-1].strip()
-                        if argu is None:
-                            argu = " "
-                        self.variables[left] = self.variables[name].strip(argu)
+                        if argu == "":
+                            argu = None
+                        self.variables[left] = self.variables[name].strip(argu) if argu is not None else self.variables[name].strip()
                         return
                     elif var_func[cnt].startswith("split(") and var_func[cnt].endswith(")"):
                         argu = self.special_split(var_func[cnt][6:-1], ",", ("(", "'", '"', "[", "{"), (")", "'", '"', "]", "}"))
@@ -4227,6 +4455,9 @@ class VEY:
                         
                     elif var_func[cnt].startswith("pop(") and var_func[cnt].endswith(')'):
                         arg = var_func[cnt][4:-1]
+                        if self.variable_info[name]["constant"]:
+                            self.error(117)
+                            return
                         try:
                             arg = self.eval(arg, {}, self.variables) if arg else arg
                         except Exception as e:
@@ -4234,7 +4465,7 @@ class VEY:
                             return
                         if not arg:
                             self.variables[left] = self.variables[name].pop()
-                        elif isinstance(arg, bool) and isinstance(self.variables[name], list):
+                        elif isinstance(arg, bool) and isinstance(self.variables[name], (list, Vector)):
                             if arg:
                                 # pops like an FIFO
                                 self.variables[left] = self.variables[name].pop(0)
@@ -4243,7 +4474,7 @@ class VEY:
                                 self.variables[left] = self.variables[name].pop()
                         else:
                             if isinstance(arg, int) and isinstance(self.variables[name], list):
-                                if arg <= len(self.variables[name]):
+                                if 0 <= arg < len(self.variables[name]):
                                     self.variables[left] = self.variables[name].pop(arg)
                                 else:
                                     self.error(60)
@@ -4262,12 +4493,21 @@ class VEY:
                         self.variables[left] = self.variables[name].read()
                     elif var_func[cnt].startswith("keys(") and var_func[cnt].endswith(")"):
                         arg = var_func[cnt][5:-1]
+                        if not isinstance(self.variables[name], (dict, HashMap)):
+                            self.error(123, "keys", type(self.variables[name]).__name__)
+                            return
                         self.variables[left] = self.variables[name].keys()
                     elif var_func[cnt].startswith("items(") and var_func[cnt].endswith(")"):
                         arg = var_func[cnt][6:-1]
+                        if not isinstance(self.variables[name], (dict, HashMap)):
+                            self.error(123, "keys", type(self.variables[name]).__name__)
+                            return
                         self.variables[left] = self.variables[name].items()
                     elif var_func[cnt].startswith("values(") and var_func[cnt].endswith(")"):
                         arg = var_func[cnt][7:-1]
+                        if not isinstance(self.variables[name], (dict, HashMap)):
+                            self.error(123, "keys", type(self.variables[name]).__name__)
+                            return
                         self.variables[left] = self.variables[name].values()
                     elif var_func[cnt].startswith("const(") and var_func[cnt].endswith(")"):
                         arg = var_func[cnt][6:-1].strip()
@@ -4629,15 +4869,20 @@ class VEY:
                     current = current[key]
                 final_key = self.eval(accessors[-1], {}, self.variables)
                 del current[final_key]
-            except (KeyError, IndexError, TypeError):
-                self.error(14, base, len(current) if hasattr(current, "__len__") else "?", accessors[-1])
+            except (KeyError, IndexError, TypeError) as e:
+                if isinstance(type(e), IndexError):
+                    self.error(14, base, len(current) if hasattr(current, "__len__") else "?", accessors[-1])
+                elif isinstance(type(e), KeyError):
+                    self.error(74, final_key, current)
+                else:
+                    self.error(6, self.Instructions[self.cnt])
+                
             return
     
         if self.special_find(arg, ".", ('"', "'"), ('"', "'")):
             obj_name, attr = arg.split(".", 1)
             obj_name = obj_name.strip()
             attr = attr.strip()
-    
             if obj_name in self.class_callers:
                 # live object instance - delete an instance attribute
                 deleted = False
@@ -4683,8 +4928,12 @@ class VEY:
                 del self.constants[base]
         elif base in self.variables:
             del self.variables[base]
+            if base in self.variable_info:
+                del self.variable_info[base]
             if base in self.constants:
                 del self.constants[base]
+            if base in self.public:
+                del self.public[base]
         elif base in self.functions:
             del self.functions[base]
         elif base in self.classes:
@@ -4787,8 +5036,6 @@ class VEY:
         
         elif types == "deep":
             sse = syntax_encloser.DeepSA(data, code)
-        
         value = sse.parse()
         if value is None:
             return
-            
