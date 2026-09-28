@@ -4,7 +4,8 @@ import time
 import sys
 from pathlib import Path
 
-from veyl import VEY
+#from veyl import VEY
+VEY = None
 from bil_helper.bil_string_complete import StringToolkit
 
 t, m, r, sys, json, au = None, None, None, None, None, None
@@ -35,6 +36,7 @@ class libraries:
         self.special_split = data.special_split
         self.special_find = data.special_find
         self.error = data.error
+        VEY = data
     
     def process(self, line, vars, variant="av"):
         global t, m, r, sys, json, au
@@ -100,16 +102,22 @@ class libraries:
                         print("\033c", end="")
                     elif man.startswith("stdwrite(") and man.endswith(")"):
                         args = self.eval(man[9:-1].strip(), {}, self.variables, from_lib=True)
+                        if not isinstance(args, str):
+                            self.error(1006, type(args).__name__)
+                            return
                         sys.stdout.write(args)
                     elif man.startswith("stderr(") and man.endswith(")"):
                         args = self.eval(man[7:-1].strip(), {}, self.variables, from_lib=True)
+                        if not isinstance(args, str):
+                            self.error(1006, type(args).__name__)
+                            return
                         sys.stderr.write(args)
                     elif man.startswith("setrecursionlimit(") and man.endswith(")"):
                         args = self.eval(man[18:-1].strip(), {}, self.variables, from_lib=True)
-                        sys.setrecursionlimit(args)
+                        self.data.recursion_limit = args
                     elif man.startswith("exit(") and man.endswith(")"):
                         args = self.eval(man[5:-1].strip(), {}, self.variables, from_lib=True)
-                        sys.exit(args + "\n")
+                        sys.exit(args)
                     elif man.startswith("attempt(") and man.endswith(")"):
                         # self.attempt is a nesting-depth counter (see veyl.py), not a bool -
                         # toggle it between "off" (0) and "one level of manual override" (1)
@@ -159,7 +167,7 @@ class libraries:
                                 print(f"\nNameError: given name is not a defined class object")
                                 self.Errors["NameError"] = True
                                 return None
-                        elif args[1] not in self.classes[args[0]]["variables"].keys():
+                        elif args[1] in self.classes[args[0]]["variables"].keys():
                             print(f"<NDB>> ATTRIBUTE {args[1]} IS A DEFINED ATTRIBUTE")
                         else:
                             print(f"<NDB>> ATTRIBUTE {args[1]} IS NOT A DEFINED ATTRIBUTE")
@@ -197,7 +205,7 @@ class libraries:
                         
                 return (self.variables, self.cnt)
             except Exception as e:
-                print(e)
+                self.error(1005, man)
                 
     def assign_variables(self, line, var):
         global t, m, r, json, sys, au
@@ -406,7 +414,7 @@ class libraries:
                 elif man.startswith("choice(") and man.endswith(")"):
                     libs = True
                     arg = self.eval(man[7:-1].strip(), {}, self.variables, from_lib=True)
-                    if not isinstance(arg, (list, dict)):
+                    if not isinstance(arg, (list, tuple)):
                         if not self.attempt:
                             print("\033[31mTraceback(most_recent_call_back):\033[0m")
                             for i in self.traceback:
@@ -633,7 +641,7 @@ class libraries:
                 elif man.startswith("get."):
                     args = man[4:].strip()
                     if args.startswith("recursionlimit"):
-                        self.variables[left] = sys.getrecursionlimit()
+                        self.variables[left] = self.data.recursion_limit()
                     elif args.startswith("sizeof(") and args.endswith(")"):
                         arg = self.eval(args[7:-1].strip(), {}, self.variables)
                         self.variables[left] = sys.getsizeof(arg)
