@@ -1,4 +1,5 @@
 # VEYL cli entry point, having different functionality in one
+# VeylPL/VeylCLI/veylcli.py
 
 from pathlib import Path
 import sys
@@ -78,7 +79,7 @@ def dispatch_args(args):
         "test": False if args["test"] is None else args["test"]
     }
     isexecutable = False
-    if all(a is None for a in list(args.values())):
+    if all(a is None or not a for a in list(args.values())):
         interpreter()
     if args["program"] is not None:
         # runs a veyl program, any text format aslong as it has veyl's syntax
@@ -120,7 +121,7 @@ Python Version: {sys.version}
 
 def command(line):
     line = line[0]
-    if (not line.startswith('"') and not line.endswith('"')) or (not line.startswith("'") and not line.endswith("'")):
+    if not((not line.startswith('"') and not line.endswith('"')) or (not line.startswith("'") and not line.endswith("'"))):
         return None
     vey = VEY(line[1:-1].strip())
     vey.execute()
@@ -146,6 +147,8 @@ Veyl Interpreter version: {reference.version}
 Veyl Version Information: {reference.version_info}
 Veyl CLI version: {reference.cli_version}
 Python Version: {sys.version}
+
+type -help for available REPL commands
     """)
     vey = VEY("")
     try:
@@ -159,6 +162,9 @@ Python Version: {sys.version}
                 print(code)
                 continue
             if line == "-clear":
+                v = input("Are you sure? y/n - ")
+                if "n" in v:
+                    continue
                 code = ""
                 continue
             if line == "-run":
@@ -173,7 +179,22 @@ Python Version: {sys.version}
                 path = input("Load Path Directory >>> ")
                 with open(path, "r") as load_file:
                     code = load_file.read()
-            
+            elif line == "-help":
+                print("""
+Veyl Interpreter REPL commands:
+> "-exit":
+    exits interpreter
+> "-check":
+    prints out the currently written code
+> "-clear":
+    clears the code
+> "-run":
+    runs the current code
+> "-load":
+    loads a pre-written code (text file)
+> "-help":
+    help instructions for REPL
+                """)
             else:
                 if line.startswith("{") and "}" not in line or line.endswith("{") and "}" not in line:
                     tab += 1
