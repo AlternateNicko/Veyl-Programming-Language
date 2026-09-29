@@ -9,6 +9,10 @@ import json
 #                "catchable":
 #            },
 
+class VeylInternalSystemError(Exception):
+    # raised instead of printing a traceback when Veyl runs with force_raise (external API access)
+    pass
+
 class handle:
     def __init__(self, data):
         self.__dict__ = data
@@ -638,6 +642,11 @@ class handle:
                 "error": "TypeError",
                 "catchable": True
             },
+            124: {
+                "response": "ValueError: Invalid value found while finding the length of the given value `{arg1}`",
+                "error": "ValueError",
+                "catchable": True
+            },
             
             
             1000: {
@@ -681,6 +690,71 @@ class handle:
         }
         # this is a file that contains each error codes and outputs.
     
+    def _build_response(self, code, arg1=None, arg2=None, arg3=None):
+        # formats the error message text of an error code with its arguments
+        if arg1 is None and arg2 is None:
+            return self.meta[code]["response"]
+        elif arg2 is None and arg3 is None and "{arg1}" in self.meta[code]["response"]:
+            return self.meta[code]["response"].format(arg1=arg1)
+        elif arg3 is None and "{arg1}" in self.meta[code]["response"] and "{arg2}" in self.meta[code]["response"]:
+            return self.meta[code]["response"].format(arg1=arg1, arg2=arg2)
+        return self.meta[code]["response"].format(arg1=arg1, arg2=arg2, arg3=arg3)
+
+    def snapshot(self, code, message=None, arg1=None, arg2=None, arg3=None):
+        # freezes everything needed to print an error's traceback later on, because by the time
+        # an unhandled error is reported (end of a try/catch chain) the pointers have moved on.
+        # `message` overrides the standard response text (used by `throw`, which has its own text)
+        try:
+            line = self.Instructions[self.cnt]
+        except Exception:
+            line = ""
+        return {
+            "code": code,
+            "name": self.meta[code]["error"] if code in self.meta else None,
+            "message": message if message is not None else self._build_response(code, arg1, arg2, arg3),
+            "traceback": dict(self.traceback),
+            "og_c": self.og_c,
+            "line": line,
+        }
+
+    def throw_snapshot(self, name, output):
+        # same as snapshot(), but for a user `throw`, which has no error code and its own message
+        try:
+            line = self.Instructions[self.cnt]
+        except Exception:
+            line = ""
+        return {
+            "code": None,
+            "name": name,
+            "message": f"{name}: {output}",
+            "traceback": dict(self.traceback),
+            "og_c": self.og_c,
+            "line": line,
+            "show_code": False,
+        }
+
+    def emit(self, err, show_code=True):
+        # prints (or raises for external API access) a frozen error snapshot in the standard format
+        if self.cause_raise:
+            raise VeylInternalSystemError(f"[Error type: {err['name']}] [Error code: {err['code']}]\nThis is an built in error handling for python, only run by an external API access")
+        file_path = f"{self.path / Path(self.file_name).with_suffix(self.file_extension)}"
+        print("\033[31mTraceback(most_recent_call_back):\033[0m")
+        i = "<module>"
+        for i in err["traceback"]:
+            print(f"    TB - [ File `<{file_path}>` line: {err['traceback'][i]}, in {i} ],")
+        print(f"    TB - [ File `<{file_path}>` TB found > line [{err['og_c']}]: {err['line']} in {i} ]")
+        print()
+        print(err["message"])
+        if show_code:
+            print("EC", err["code"])
+
+    def flush_pending(self):
+        # reports the error that a try block swallowed but no catch of the chain handled
+        err = self.__dict__.get("pending_error")
+        self.pending_error = None
+        if err is not None:
+            self.emit(err, show_code=err.get("show_code", True))
+
     def stderr(self, code, arg1=None, arg2=None, arg3=None):
         # code: error code based on what error type it is
         # arg1: what argument is needed in response
@@ -688,24 +762,11 @@ class handle:
         
         # all arguments used MUST be arg1 and arg2 aswell, misspelled variables throws out an error aswell
         if not self.attempt or self.attempt and not self.meta[code]["catchable"]:
-            if self.cause_raise:
-                raise VeylInternalSystemError(f"[Error type: {self.meta[code]['error']}] [Error code: {code}]\nThis is an built in error handling for python, only run by an external API access")
-            print("\033[31mTraceback(most_recent_call_back):\033[0m")
-            
-            for i in self.traceback:
-                print(f"    TB - [ File `<{self.path / Path(self.file_name).with_suffix(self.file_extension)}>` line: {self.traceback[i]}, in {i} ],")
-            print(f"    TB - [ File `<{self.path / Path(self.file_name).with_suffix(self.file_extension)}>` TB found > line [{self.og_c}]: {self.Instructions[self.cnt]} in {i} ]")
-            print()
-            if arg1 is None and arg2 is None:
-                response = self.meta[code]["response"]
-            elif arg2 is None and arg3 is None and "{arg1}" in self.meta[code]["response"]:
-                response = self.meta[code]["response"].format(arg1=arg1)
-            elif arg3 is None and "{arg1}" in self.meta[code]["response"] and "{arg2}" in self.meta[code]["response"]:
-                response = self.meta[code]["response"].format(arg1=arg1, arg2=arg2)
-            else:
-                response = self.meta[code]["response"].format(arg1=arg1, arg2=arg2, arg3=arg3)
-            print(response)
-            print("EC", code)
+            self.emit(self.snapshot(code, None, arg1, arg2, arg3))
+        elif self.__dict__.get("pending_error") is None:
+            # inside a try: stay silent for now, but remember the first error so it can still
+            # be reported in the standard format if none of the catch blocks handle it
+            self.pending_error = self.snapshot(code, None, arg1, arg2, arg3)
         self.Errors[self.meta[code]["error"]] = True
 
         return self.Errors
