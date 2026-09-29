@@ -218,7 +218,7 @@ output("Result is:", result)
 
 • Bubble sort
 ```
-public vector func bubble(lst) </ defines a public function named bubble with a vector return type
+public vector func bubble(lst)
 {
     lens = length(lst)
     for i in range(lens)
