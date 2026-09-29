@@ -10,8 +10,8 @@ from pathlib import Path
 from tqdm import tqdm
 from itertools import zip_longest
 
-
 # this fix circular imports
+veylIO = None
 if "VeylPL" not in system.path:
     system.path.append("VeylPL")
     libraries = None
@@ -333,6 +333,7 @@ class HashMap:
             for key, value in values.items():
                 self[key] = value
             self.initializing = False
+        self._length = len(self)
 
     def _check_key(self, key, fromsetitem=False):
         if self.key_type is ANY:
@@ -355,12 +356,17 @@ class HashMap:
                 f"hash map value must be {self.value_type.__name__}, "
                 f"got {type(value).__name__}"
             )
+        
     
     def __setitem__(self, key, value):
         if not self._check_key(key, fromsetitem=True):
             return
         self._check_value(value)
         self._data[key] = value
+        if not self.initializing and len(self) != self._length:
+            self._vey.error(118, key)
+            del self._data[key]
+            return
 
     def __getitem__(self, key):
         self._check_key(key)
@@ -457,8 +463,9 @@ class VEY:
             { body }
         - try
             { body }
-        - except [Error name]
+        - catch [Error name]
             { body }
+          (a try can be followed by several catch blocks, the first one matching the error runs)
         - inherit [method_name][parameters] from [inherit_class]
         - load [iter_variable][key_or_index] = [value]
         - break
@@ -581,6 +588,8 @@ class VEY:
         # straight to False/0 and breaking an outer try that's still "in progress".
         # 0 is falsy and any positive int is truthy, so every existing `if self.attempt` /
         # `if not self.attempt` check elsewhere keeps working exactly as before.
+        self.pending_error = None # the first error a try block swallowed, kept so it can still be reported in the standard format if no catch handles it
+        self.catch_handled = False # True once one catch block of the current try has run, so the remaining sibling catch blocks in the chain are skipped
         self.in_class = [None, False, None, False] # if the program is currently in a code, first index stores the name of the class, the second shows True if they are in a class, third is what class objecf it is (None if it's inside a class) else False
         self.evals = False # if it's currently evaluating something
         self.is_return = False # for return
@@ -1234,13 +1243,15 @@ class VEY:
         while self.cnt < len(self.Instructions):
             # Check for errors
             
-            if any(a for a in list(self.Errors.values())) and not fromcatch:
+            instruction = self.Instructions[self.cnt].strip()
+            # an active error stops the block, except when the next line is a catch: that lets a
+            # try/catch nested inside this block still get the chance to handle its own error
+            if any(a for a in list(self.Errors.values())) and not fromcatch and not instruction.startswith("catch "):
                 break
             if self.recursion_limit == len(self.traceback):
                 print("IRN")
                 self.error(78)
                 return
-            instruction = self.Instructions[self.cnt].strip()
             self.update_traceback()
             if self.debug or self.adv_debug:
                 self.run_injected_method("clear_debug_screen")
@@ -1282,6 +1293,17 @@ class VEY:
         self.og_c = ogc
         self.Instructions = original
         return
+    
+    def next_is_catch(self, start):
+        # looks ahead from line index `start` (skipping blank lines) and tells if the next
+        # instruction is another `catch`, meaning the current try has a chain of catch blocks
+        i = start
+        while i < len(self.Instructions):
+            line = self.Instructions[i].strip()
+            if line:
+                return line.startswith("catch ")
+            i += 1
+        return False
     
     def prep_exec(self, code): # prepares to execute a code block
         final = r""
@@ -1696,6 +1718,14 @@ class VEY:
         self.Errors = errors.stderr(code, arg1, arg2, arg3)
         return
     
+    def snapshot_throw(self, name, output):
+        # freezes a user `throw` made inside a try, so it can be reported later if no catch handles it
+        return handle(self.__dict__).throw_snapshot(name, output)
+    
+    def flush_pending_error(self):
+        # prints the error a try swallowed that no catch of its chain handled, in the standard format
+        handle(self.__dict__).flush_pending()
+    
     def _extract_identifiers(self, exp):
         """
         Returns the set of real identifier tokens in exp, ignoring anything
@@ -1895,7 +1925,6 @@ class VEY:
         it also has a scope system where variables are refreshed but you can still access global variables
         the original variables in the main program are untouched
         """
-        self.in_func += 1 # for nested function calls
         og_cond = self.is_priv
         og_cond1 = self.is_pub
         og_loop_md = (self.breaking, self.continuing, self.loop_stack, self.exec_fl)
@@ -1929,13 +1958,14 @@ class VEY:
             argument = provided_args
             self.is_priv = True
             self.is_pub = False
-        self.cnt = 0
-        self.og_c = ogc + 1
-        point = self.cnt
         if len(argument) > len(arg) or len(argument) < len(arg):
             if len(argument) > 0 and len(arg) > 0 and not (argument[0] == '' and arg[0] == ''):
                 self.error(12, name, len(argument), len(arg))
                 return None
+        self.cnt = 0
+        self.og_c = ogc + 1
+        point = self.cnt
+        self.in_func += 1 # for nested function calls
         if '' in arg:
             del arg[0]
         
@@ -2119,7 +2149,7 @@ class VEY:
         if tname in self.traceback:
             if isrecursive:
                 self.recursion_md[m_name][1] -= 1
-            del self.traceback[m_name]
+            del self.traceback[tname]
         return
     
     def _split_index_chain(self, text):
@@ -2988,6 +3018,7 @@ class VEY:
             # error handling by catching errors, with throw and catch
             block, count, eogc = self.get_block()
             self.attempt += 1 # entering an attempt region; nested tries just add to the depth
+            self.catch_handled = False
             code = self.prep_exec(block)
             self.exec_block(code, count)
             self.cnt = count - 1
@@ -3005,27 +3036,41 @@ class VEY:
                         
                 error_name = "".join(new_name)
                 block, count, eogc = self.get_block()
-                if error_name in self.Errors.keys():
-                    if self.Errors[error_name]:
+                # multiple catch blocks can follow one try, each with its own code:
+                #   try { ... } catch TypeError { ... } catch ValueError { ... }
+                # the try's attempt depth is only released by the LAST catch in the chain
+                chain_continues = self.next_is_catch(count)
+                if error_name in self.Errors.keys() or error_name == "<any>":
+                    if error_name == "<any>":
+                        matches = any(i for i in self.Errors.values())
+                    else:
+                        matches = self.Errors[error_name]
+                    # only the first matching catch runs; later ones in the chain are skipped
+                    if matches and not self.catch_handled:
                         for i in self.Errors:
                             self.Errors[i] = False
+                        self.pending_error = None # handled, so nothing is left to report
                         code = self.prep_exec(block)
                         self.exec_block(code, count, fromcatch=True)
-                    self.cnt = count - 1
-                    self.og_c = eogc - 1
-                elif error_name == "<any>":
-                    if any(i for i in self.Errors.values()):
-                        for i in self.Errors:
-                            self.Errors[i] = False
-                        code = self.prep_exec(block)
-                        self.exec_block(code, count, fromcatch=True)
+                        # set after the block ran, so a try/catch nested inside it can't reset it
+                        self.catch_handled = True
                     self.cnt = count - 1
                     self.og_c = eogc - 1
                 else:
                     self.attempt -= 1 # this try/catch pair is done (even though it errored on an unknown catch name)
+                    self.catch_handled = False
                     self.error(24, error_name)
                     return None
-                self.attempt -= 1 # leaving the attempt region this try opened; so the errors and messages out of try block will work again once we're back to depth 0
+                if not chain_continues:
+                    self.attempt -= 1 # last catch of the chain: leaving the attempt region this try opened; so the errors and messages out of try block will work again once we're back to depth 0
+                    self.catch_handled = False
+                    # no catch of the chain matched (or the catch block raised a new error): the error must
+                    # not vanish silently. Once we're out of every try, report it with the standard traceback.
+                    # While still inside an outer try it just keeps propagating, so the outer catch can handle it
+                    if not self.attempt and any(self.Errors.values()):
+                        self.flush_pending_error()
+                    elif not any(self.Errors.values()):
+                        self.pending_error = None
             else:
                 self.error(25)
                 return None
@@ -3043,6 +3088,12 @@ class VEY:
                 if not self.system_io:
                     self.Errors[name] = True
                     return
+                if self.attempt:
+                    # inside a try: don't print yet, only report it if none of the catch blocks handle it
+                    if self.pending_error is None:
+                        self.pending_error = self.snapshot_throw(name, output)
+                    self.Errors[name] = True
+                    return None
                 veylIO.vprint("\033[31mTraceback(most_recent_call_back):\033[0m")
                 for i in self.traceback:
                     veylIO.vprint(f"    TB - [ File `<{self.path / Path(self.file_name).with_suffix(self.file_extension)}>` line: {self.traceback[i]}, in {i} ],")
@@ -3697,8 +3748,22 @@ class VEY:
         # runs self.eval if it includes arithmetics
         if not self.evals and any(operator in main for operator in ["+", "-", "/", "*", "%"]):
             if self.special_find(main, ["+", "-", "*", "/", "%"], ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
-                self.variables[left] = self.eval(main, {}, self.variables)
-                pre_run = True
+                try:
+                    self.variables[left] = self.eval(main, {}, self.variables)
+                    pre_run = True
+                except Exception as e:
+                    # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                    if isinstance(e, ZeroDivisionError):
+                        self.error(4)
+                        return None
+                    if isinstance(e, MemoryError):
+                        self.error(7)
+                        return
+                    if isinstance(e, NameError):
+                        self.error(18, main)
+                        return
+                    self.error(6, right)
+                    return None
                 
         def built_in_functions(left, main, right, method):
             libs = False
@@ -3744,7 +3809,7 @@ class VEY:
                     try:
                         value = self.eval(arg.strip(), {}, self.variables)
                     except Exception as e:
-                        return None
+                        self.error(124, arg.strip())
                     if value or value in [[], (), {}, "", 0]:
                         self.variables[left] = len(value)
                     return
@@ -3951,7 +4016,7 @@ class VEY:
                     return
                 elif main.startswith("mean("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, (list, Array, tuple Vector)):
+                    if not isinstance(arg, (list, Array, tuple, Vector)):
                         self.error(41, arg)
                         return None
                     if any(not isinstance(a, (int, float)) for a in arg):
@@ -3962,7 +4027,7 @@ class VEY:
                     return
                 elif main.startswith("median("):
                     arg = self.eval(main[7:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, (list, Array, tuple Vector)):
+                    if not isinstance(arg, (list, Array, tuple, Vector)):
                         self.error(41, arg)
                         return None
                     if any(not isinstance(a, (int, float)) for a in arg):
@@ -3981,7 +4046,7 @@ class VEY:
                     return
                 elif main.startswith("mode("):
                     arg = self.eval(main[5:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, (list, Array, tuple Vector)):
+                    if not isinstance(arg, (list, Array, tuple, Vector)):
                         self.error(41, arg)
                         return None
                     if any(not isinstance(a, (int, float)) for a in arg):
@@ -4007,7 +4072,7 @@ class VEY:
                     return
                 elif main.startswith("sum("):
                     arg = self.eval(main[4:-1].strip(), {}, self.variables)
-                    if not isinstance(arg, (list, Array, tuple Vector)):
+                    if not isinstance(arg, (list, Array, tuple, Vector)):
                         self.error(41, arg)
                         return None
                     if any(not isinstance(a, (int, float)) for a in arg):
@@ -4318,6 +4383,7 @@ class VEY:
                                         pass
                                     else:
                                         args = arg
+                                        
                                 if args in ['int', 'interger']:
                                     self.variables[left] = int(self.variables[name])
                                     return
@@ -4378,7 +4444,7 @@ class VEY:
                                         params[2] = self.eval(params[2].strip(), {}, self.variables, from_isinstance=True)
                                     self.variables[left] = HashMap(params[1], params[2], self, self.variables[name])
                                 else:
-                                    self.error(57, type(args))
+                                    self.error(57, type(args).__name__)
                                     return
 
                             except ValueError:
@@ -4539,6 +4605,7 @@ class VEY:
                 return
         except Exception as e:
             self.error(8, right)
+            print(e)
             return
     
     def plain_builtins(self, instruction):
