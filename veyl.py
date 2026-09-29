@@ -1249,7 +1249,6 @@ class VEY:
             if any(a for a in list(self.Errors.values())) and not fromcatch and not instruction.startswith("catch "):
                 break
             if self.recursion_limit == len(self.traceback):
-                print("IRN")
                 self.error(78)
                 return
             self.update_traceback()
@@ -3447,6 +3446,10 @@ class VEY:
                     # map <key: type, value: vector int *
                     
                     ismap = True
+                    if not self.special_find(keyword, ">", ('"', "'", "(", "[", "{"), ("'", '"', ")", "]", "}")):
+                        self.datatype_keyword(keyword, dt=datatype, token=token, ismap=False)
+                        self.process_vars()
+                        return
                     keyword = keyword.rsplit(">", 1)
                     instruction = keyword[1].strip()
                     if keyword[0].startswith("<"):
@@ -4605,7 +4608,6 @@ class VEY:
                 return
         except Exception as e:
             self.error(8, right)
-            print(e)
             return
     
     def plain_builtins(self, instruction):
