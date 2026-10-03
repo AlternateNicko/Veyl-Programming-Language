@@ -619,7 +619,10 @@ class VEY:
         self.public = {} # public variables, this is permanentaly stored unless "private" intercepts it
         self.private_classes = {} # For future uses
         self.variable_info = {} # variable datatype, constant, and protected infos
-        self.original_var = [] # original variable once calling a new function, the self.variables are replace with a new dictionary, and original_var stores the global variables
+        self.original_var = [] # original variable scope for each active function/method call
+        # Names explicitly declared with `global` for each active function/method scope.
+        # Only these names are allowed to write changes back to the caller scope.
+        self.global_scope = []
         self.recursion_md = {}
         self.cache = {
             "eval": {}, # for evaluation (v1.0.3)
@@ -831,7 +834,7 @@ class VEY:
             isstring = True
         if expression in self.variables.keys():
             return self.variables[expression]
-        if not any(a in expression for a in ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!="]) and "[" in expression and expression.strip().endswith("]"):
+        if not any(a in expression for a in ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!=", "not", "in", "as", "and", "or"]) and "[" in expression and expression.strip().endswith("]"):
             tk = expression.strip().split("[", 1)
             iter = tk[0].strip()
             if len(iter) > 0:
@@ -896,7 +899,7 @@ class VEY:
                     execution = True
             if execution:
                 v = False
-                things = ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!="]
+                things = ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!=", " not ", " in ", " as ", " or ", " and "]
                 v = self.special_find(expression, things, ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
                 # processes item expressions
                 if expression.strip().startswith(("(", "[", "{")):
@@ -1087,7 +1090,7 @@ class VEY:
         identifiers = self._extract_identifiers(exp)
         if any(v in identifiers for v in self.variables.keys()):
             # uses the same technique as eval, split the expressions
-            operators = ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!="]
+            operators = ["+", "-", "**", "*", "%", "/", "<=", ">=", "<", ">", "==", "!=", " not ", " in ", " as ", " and ", " or "]
             final_exp = []
             has_built_ins = self.special_find(exp, operators, ("'", '"', "(", "{", "["), ("'", '"', ")", "}", "]"))
             if not has_built_ins:
@@ -1240,6 +1243,7 @@ class VEY:
         ogif = self.in_if
         self.Instructions = code.split("\n")
         og_var = self.variables.copy() if class_exec else False
+        
         while self.cnt < len(self.Instructions):
             # Check for errors
             
@@ -1579,13 +1583,22 @@ class VEY:
         return list1, list2
         
     def global_vars(self):
-        globals = []
-        lv, gv = self._balance_lists_inplace(list(self.variables.keys()), list(self.original_var[-1].keys()))
-        for g, l in zip(gv, lv):
-            if g == l:
-                globals.append(g)
-        for i in globals:
-            self.original_var[-1][i] = self.variables[i]
+        """
+        Writes explicitly declared `global` variables back to the caller scope.
+
+        A local variable/parameter is allowed to have the same name as a variable
+        in the caller.  Matching names alone therefore must NOT be treated as a
+        global declaration, otherwise a call such as `bubble_sort(arr)` can
+        overwrite the caller's `arr` merely because the function parameter is
+        also named `arr`.
+        """
+        if not self.original_var or not self.global_scope:
+            return
+
+        caller_scope = self.original_var[-1]
+        for name in self.global_scope[-1]:
+            if name in self.variables and name in caller_scope:
+                caller_scope[name] = self.variables[name]
     
     def datatype_convert(self, value, types, token=None):
         try:
@@ -1644,7 +1657,7 @@ class VEY:
         # cache load here
         if cond in self.cache["cond"].keys():
             change = True
-            for v in self.cache["cond"][cond]["variables"].keys():
+            for v in self.cache["cond"][cond]["const"].keys():
                 if self.cache["cond"][cond]["const"][v][0] != self.constants[v][0]:
                     change = False
                     break
@@ -1681,7 +1694,7 @@ class VEY:
                 else:
                     boolean = self.eval(expression["expr"], {}, self.variables, from_exp=True)
                 if not isinstance(boolean, bool):
-                    self.error(11, type(boolean))
+                    self.error(11, boolean)
                     return False
                 if isnot:
                     if boolean:
@@ -1979,7 +1992,8 @@ class VEY:
             tname = name
             self.traceback[tname] = [self.og_c, self.Instructions[self.cnt]]
             self.recursion_md[tname] = [name, 0]
-        self.original_var.append(self.variables.copy())
+        self.original_var.append(copy.deepcopy(self.variables))
+        self.global_scope.append(set())
         self.variables = {}
         
         og_cache = self.cache
@@ -2012,6 +2026,7 @@ class VEY:
         self.exec_block(code, count)
         self.global_vars()
         self.variables = self.original_var.pop()
+        self.global_scope.pop()
         self.variables.update(self.public)
         self.in_func -= 1
         if self.return_type:
@@ -2072,6 +2087,7 @@ class VEY:
             self.recursion_md[tname] = [name, 0]
             
         self.original_var.append(self.variables.copy())
+        self.global_scope.append(set())
         og_var = self.variables.copy()
         self.variables = {}
         if object:
@@ -2123,6 +2139,7 @@ class VEY:
             self.objects[obj_name]["variables"] = self.variables.copy()
         if self.in_func == 0:
             self.variables = self.original_var.pop()
+            self.global_scope.pop()
             self.variables.update(og_var)
             self.Instructions = original_inst
             self.cnt = count
@@ -2134,6 +2151,7 @@ class VEY:
         self.global_vars()
         
         self.variables = self.original_var.pop()
+        self.global_scope.pop()
         self.variables.update(og_var)
         self.in_func -= 1
         if self.return_type:
@@ -2606,6 +2624,10 @@ class VEY:
             if arg not in self.original_var[-1]:
                 self.error(21, arg)
                 return None
+            # Record the explicit declaration so `global_vars()` knows this name
+            # is intentionally shared with the caller scope.
+            if self.global_scope:
+                self.global_scope[-1].add(arg)
             self.variables[arg] = self.original_var[-1][arg]
             
         elif instruction.startswith('if '):
@@ -2682,7 +2704,7 @@ class VEY:
                 self.cnt = count - 1
                 self.og_c = eogc - 1
                 return
-        elif instruction.startswith('else '):
+        elif instruction.startswith('else'):
             """
             this is two keywords depending on usage, which is
             else if and else statements.
@@ -3703,10 +3725,10 @@ class VEY:
         if len(l) == 1:
             left = l[0]
         else:
-            left = l # full list instead
+            left = [a.strip() for a in l]# full list instead
             
         # test if it is an illegal SSE or variable name
-        name_test = [left] if not isinstance(left, list) else left
+        name_test = [left] if not isinstance(left, list) else [a for a in left]
         extra_forbids = ["[", "(", "{", "]", ")", "}"]
         for n in name_test:
             if n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal and not fromsystem:
@@ -3749,8 +3771,8 @@ class VEY:
                             
         pre_run = False
         # runs self.eval if it includes arithmetics
-        if not self.evals and any(operator in main for operator in ["+", "-", "/", "*", "%"]):
-            if self.special_find(main, ["+", "-", "*", "/", "%"], ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
+        if not self.evals and any(operator in main for operator in ["+", "-", "/", "*", "%", " not ", " in ", " and ", " or ", " as "]):
+            if self.special_find(main, ["+", "-", "*", "/", "%", " not ", " in ", " and ", " as ", " or "], ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}")):
                 try:
                     self.variables[left] = self.eval(main, {}, self.variables)
                     pre_run = True
@@ -4303,6 +4325,7 @@ class VEY:
                     self.error(18, main)
                     return
                 self.error(6, right)
+                print(e)
                 return None
         if not run_method and not pre_run:
             val = built_in_functions(left, main, right, ismethod)
