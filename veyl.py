@@ -578,6 +578,7 @@ class VEY:
         self.func_name = "" # name of current function it's inside
         
         # FLAGS
+        self.if_stack = [] # one frame per if/else if/else branch that is currently running: {"in_if", "condition", "if_executed"}. Pushed right before a branch body runs and popped right after, so a nested if/else chain inside the body can't overwrite the flags of the chain it lives in
         self.in_if = False # inside an if statement
         self.if_executed = False # if an if statement is executed with the conditions being true, turns True
         self.condition = False # for the if, else if statement, turns true once their condition is also true
@@ -1307,6 +1308,71 @@ class VEY:
                 return line.startswith("catch ")
             i += 1
         return False
+    
+    def run_branch(self, block, count):
+        """
+        Runs the body of one if / else if / else branch.
+        Saves the current in_if, condition and if_executed flags on self.if_stack
+        before the body runs. Any nested if chain inside the body is free to change
+        those flags, and once the body is done the frame is popped and the flags
+        are put back, so the outer chain continues with its own state.
+        (try/finally keeps the stack balanced even if the body bails out early)
+        """
+        self.if_stack.append({
+            "in_if": self.in_if,
+            "condition": self.condition,
+            "if_executed": self.if_executed,
+        })
+        try:
+            self.exec_block(self.prep_exec(block), count)
+        finally:
+            frame = self.if_stack.pop()
+            self.in_if = frame["in_if"]
+            self.condition = frame["condition"]
+            self.if_executed = frame["if_executed"]
+    
+    def _brace_delta(self, line):
+        """net number of `{` minus `}` in a line, ignoring any inside string literals"""
+        delta = 0
+        quote = None
+        for ch in line:
+            if quote:
+                if ch == quote:
+                    quote = None
+            elif ch in ("'", '"'):
+                quote = ch
+            elif ch == "{":
+                delta += 1
+            elif ch == "}":
+                delta -= 1
+        return delta
+    
+    def skip_chain(self, count, eogc, stop_at_else):
+        """
+        Walks forward from the line right after a finished if / else if block.
+        stop_at_else=True  -> stops on the next `else` / `else if` of this chain (so it can be evaluated)
+        stop_at_else=False -> skips every remaining branch of this chain
+        The chain ends at the first line, outside of any block, that is not an else branch
+        (a sibling `if`, a plain statement, ...). Returns (count, eogc, chain_ended).
+        """
+        depth = 0
+        total = len(self.Instructions)
+        while count < total:
+            line = self.Instructions[count].strip()
+            if depth == 0:
+                if line == "":
+                    count += 1
+                    eogc += 1
+                    continue
+                if line.startswith("else"):
+                    if stop_at_else:
+                        return count, eogc, False
+                elif not line.startswith("{"): # `{` alone = brace of an else written on the next line
+                    return count, eogc, True
+            depth = max(0, depth + self._brace_delta(line))
+            count += 1
+            eogc += 1
+        return count, eogc, True
     
     def prep_exec(self, code): # prepares to execute a code block
         final = r""
@@ -2650,57 +2716,21 @@ class VEY:
             if cond:
                 self.condition = True
                 self.if_executed = True
-                code = self.prep_exec(block)
-                self.exec_block(code, count)
-                self.in_if = True
-                # iterates over the code till it reaches a line starting with else or a non in code block line
-                count -= 1
-                eogc -= 1
-                while True:
-                    count += 1
-                    eogc += 1
-                    if count >= len(self.Instructions): break
-                    if self.Instructions[count].strip().startswith('{') or self.Instructions[count].strip().endswith('{'):
-                        self.in_block += 1
-                    if self.Instructions[count].strip().startswith('}') and self.in_block > 0 or self.Instructions[count].strip().endswith('}') and self.in_block > 0:
-                        self.in_block -= 1
-                    if self.Instructions[count].strip() == "":
-                        continue
-                    if self.Instructions[count].strip().startswith("else"):
-                        continue
-                    if not self.Instructions[count].strip().startswith(('{', '}', 'else')) and self.in_block == 0:
-                        self.in_block, self.condition = 0, False
-                        self.in_if = False
-                        self.if_executed = False
-                        break
-                        
+                self.run_branch(block, count)
+                # chain is done: skip every remaining else if / else, then reset the flags
+                count, eogc, _ = self.skip_chain(count, eogc, stop_at_else=False)
+                self.in_block, self.condition = 0, False
+                self.in_if = False
+                self.if_executed = False
                 self.cnt = count - 1
                 self.og_c = eogc - 1
                 return
             else:
-                self.condition = False 
-                # iterates over the code till it reaches a line starting with else or a non in code block line
-                count -= 1
-                eogc -= 1
-                while True:
-                    count += 1
-                    eogc += 1
-                    if count >= len(self.Instructions): break
-                    if self.Instructions[count].strip().startswith('else') and self.in_block == 0:
-                        break
-                    if self.Instructions[count].strip().startswith('{') or self.Instructions[count].strip().endswith('{'):
-                        self.in_block += 1
-                    if self.Instructions[count].strip().startswith('}') and self.in_block > 0 or self.Instructions[count].strip().endswith('}') and self.in_block > 0:
-                        self.in_block -= 1
-                        if self.in_block == 0:
-                            self.in_block = False
-                    if self.Instructions[count].strip() == "":
-                        continue
-                    if not self.Instructions[count].strip().startswith(('{', '}', 'else')) and not self.in_block:
-                        self.in_block, self.condition = False, False
-                        self.in_if = False
-                        break
-                
+                self.condition = False
+                # jump to the next else if / else of this chain (or past the chain if there is none)
+                count, eogc, ended = self.skip_chain(count, eogc, stop_at_else=True)
+                if ended:
+                    self.in_block, self.in_if = 0, False
                 self.cnt = count - 1
                 self.og_c = eogc - 1
                 return
@@ -2727,48 +2757,19 @@ class VEY:
                     self.in_if = True
                     if cond and not self.if_executed:
                         self.condition = True
-                        code = self.prep_exec(block)
-                        self.exec_block(code, count)
-                        self.in_if = True
-                        self.cnt = count - 1
-                        count -= 1
-                        eogc -= 1
-                        while True:
-                            count += 1
-                            eogc += 1
-                            if count >= len(self.Instructions): break
-                            if self.Instructions[count].strip().startswith('{') or self.Instructions[count].strip().endswith('{'):
-                                self.in_block += 1
-                            elif self.Instructions[count].strip().startswith('}') and self.in_block > 0 or self.Instructions[count].strip().endswith('}') and self.in_block > 0:
-                                self.in_block -= 1
-                            elif self.Instructions[count].strip() == "":
-                                continue
-                            elif not self.Instructions[count].strip().startswith(('{', '}', 'else')) and self.in_block == 0:
-                                self.in_block = 0
-                                self.in_if = False
-                                break
+                        self.if_executed = True
+                        self.run_branch(block, count)
+                        count, eogc, _ = self.skip_chain(count, eogc, stop_at_else=False)
+                        self.in_block, self.condition = 0, False
+                        self.in_if = False
+                        self.if_executed = False
                         self.cnt = count - 1
                         self.og_c = eogc - 1
                     else:
                         self.condition = False
-                        count -= 1
-                        eogc -= 1
-                        while True:
-                            count += 1
-                            eogc += 1
-                            if count >= len(self.Instructions): break
-                            if self.Instructions[count].strip().startswith(('else', "else if")) and self.in_block == 0:
-                                break
-                            elif self.Instructions[count].strip().startswith('{') or self.Instructions[count].strip().endswith('{'):
-                                self.in_block += 1
-                            elif self.Instructions[count].strip().startswith('}') and self.in_block > 0 or self.Instructions[count].strip().endswith('}') and self.in_block > 0:
-                                self.in_block -= 1
-                            elif self.Instructions[count].strip() == "":
-                                continue
-                            elif not self.Instructions[count].strip().startswith(('{', '}', 'else')) and self.in_block == 0:
-                                self.in_block = 0
-                                self.in_if = False
-                                break
+                        count, eogc, ended = self.skip_chain(count, eogc, stop_at_else=True)
+                        if ended:
+                            self.in_block, self.in_if = 0, False
                         self.cnt = count - 1
                         self.og_c = eogc - 1
                         return
@@ -2783,8 +2784,7 @@ class VEY:
                     self.og_c = eogc - 1
                 else:
                     self.in_if = False
-                    code = self.prep_exec(block)
-                    self.exec_block(code, count)
+                    self.run_branch(block, count)
                     self.cnt = count - 1
                     self.og_c = eogc - 1
             
