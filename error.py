@@ -647,7 +647,76 @@ class handle:
                 "error": "ValueError",
                 "catchable": True
             },
-            
+            125: {
+                "response": "SyntaxError: Cannot execute `case` branch that is outside a match-case statement",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            126: {
+                "response": "SyntaxError: Invalid `match` syntax, `{arg1}`",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            127: {
+                "response": "SyntaxError: Invalid `case` conditional syntax, `{arg1}`",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            128: {
+                "response": "SyntaxError: Invalid syntax `{arg1}`, match expects a case keyword prefix",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            129: {
+                "response": "SyntaxError: Invalid conditional syntax, requires a enclosing parenthesis for condition `{arg1}`",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            130: {
+                "response": "SyntaxError: invalid fallthrough statement found outside of match-case block",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            131: {
+                "response": "SyntaxError: `do` keyword syntax detected lacking `while` loop statement and condition",
+                "error": "SyntaxError",
+                "catchable": False
+            },
+            132: {
+                "response": "TypeError: open() function expects an argument length below or equal to 3, but got `{arg1}` length",
+                "error": "TypeError",
+                "catchable": False
+            },
+            133: {
+                "response": "TypeError: open() function expects an argument length above or equal to 2, but got `{arg1}`",
+                "error": "TypeError",
+                "catchable": False
+            },
+            134: {
+                "response": "TypeError: given mode `{arg1}` is not a valid mode",
+                "error": "TypeError",
+                "catchable": True
+            },
+            135: {
+                "response": "IsADirectoryError: Given path `{arg1}` was opened as an directory without a file",
+                "error": "IsADirectoryError",
+                "catchable": True
+            },
+            136: {
+                "response": "NotADirectoryError: Given directory path `{arg1}` is not a valid directory path",
+                "error": "NotADirectoryError",
+                "catchable": True
+            },
+            137: {
+                "response": "PermissionError: Cannot open file `{arg1}` due to operating system permission issues",
+                "error": "PermissionError",
+                "catchable": True
+            },
+            138:  {
+                "response": "OSError: Cannot open file `{arg1}` due to some operating system issues",
+                "error": "OSError",
+                "catchable": True
+            },
             
             1000: {
                 "response": "InternalError: This error is caused by an Error that was unable to handle by Veyl's current error handler, and was passed through Python exceptions\nThis is not a problem within the users code, but most likely a problem with Veyl's system itself\n\

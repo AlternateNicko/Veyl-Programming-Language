@@ -516,7 +516,11 @@ class VEY:
         # LIBRARIES
         self.nplibs = special_library
         self.libraries = ["math", "time", "random", "smart", "sys", "files", "os", "debug", "string", "numtools"] # libraries, these are built ins
-        self.libraries.extend(list(special_library.keys()))
+        new_lib = []
+        for l in list(special_library.keys()):
+            if not l in self.libraries:
+                new_lib.append(l)
+        self.libraries.extend(new_lib)
         self.library = [] # library names will be appended here once they are imported
         self.nplibs_acc = {key: False for key in self.nplibs.keys()}
         self.py_modules = {}
@@ -548,7 +552,7 @@ class VEY:
         
         # EVALUATIONS / CONSTANTS
         self.bif = ["num", "input", "eval", "exec", "length", "sort", "min", "mean", "max", "median", "mode", "sum", "range", "call", "reverse", "type", "format",
-            "zip", "dict", "map", "isinstance", "check"
+            "zip", "dict", "map", "isinstance", "check", "open", "find", "id", "repr"
         ] # for eval to: know if the expression they are evaluating has the languages codes
         self.bim = ["cap", "low", "as", "rem", "strip", "split", "hasprefix", "hassuffix", "replace", "slice", "pop", "push", "read", "keys", "values", "items", "const",
             "variable", "immutable", "mutable", "swap_case",
@@ -1924,6 +1928,40 @@ class VEY:
             result.append(current.strip())
         return result
         
+    _ENCLOSER_CLOSERS = {"(": ")", "[": "]", "{": "}", "'": "'", '"': '"'}
+
+    def _step_encloser(self, char, stack, in_char1, in_char2):
+        """
+        Tracks quotes/brackets for special_split and special_find using a stack
+        of expected closing characters.
+        - a quote only ever closes the same quote (so a `"` can no longer close an
+          open `(` and `'` can no longer close a `"` string)
+        - brackets nest, and only their matching bracket closes them
+        - inside a string literal everything except its closing quote is literal
+        Returns True if `char` opened/closed an encloser (the caller must then just
+        copy the char), otherwise False. While `stack` is non empty the caller is
+        inside an encloser and must not split/match on it.
+        """
+        if stack:
+            top = stack[-1]
+            if top in ("'", '"'):  # inside a string literal
+                if char == top:
+                    stack.pop()
+                    return True
+                return False
+            if char == top and char in in_char2:
+                stack.pop()
+                return True
+        if char in in_char1:
+            closer = self._ENCLOSER_CLOSERS.get(char)
+            if closer is None:
+                # unknown delimiter, fall back to positional pairing
+                idx = in_char1.index(char)
+                closer = in_char2[idx] if idx < len(in_char2) else char
+            stack.append(closer)
+            return True
+        return False
+
     def special_split(self, line, split_str, in_char1, in_char2, ret_capture_group=False, limit=None, ranges=None):
         """
     splits a string into a list by using split()
@@ -1937,26 +1975,20 @@ class VEY:
         end = len(line) if end == -1 else end + 1
         line = line[start:end]
         new_line = ""
-        inside_char = False
+        stack = []
         i = 0
         splits = 0
     
         while i < len(line):
-            # Check if we're inside quotes
-            if line[i] in in_char1 and not inside_char:
-                inside_char = line[i]
-                new_line += line[i]
-                i += 1
-                continue
-            elif line[i] in in_char2 and inside_char:
-                inside_char = False
+            # quotes / brackets (nesting aware, a quote only closes the same quote)
+            if self._step_encloser(line[i], stack, in_char1, in_char2):
                 new_line += line[i]
                 i += 1
                 continue
     
             # Check for the multi-character split
             if (
-                not inside_char
+                not stack
                 and (limit is None or splits < limit)
                 and line[i:i + len(split_str)] == split_str
             ):
@@ -1991,7 +2023,7 @@ class VEY:
         if not (start == 0 and end == -1):
             end = len(line) if end == -1 else end + 1
             line = line[start:end]
-        inside_char = False
+        stack = []
         i = 0
         if not isinstance(target, list):
             target = [target]
@@ -2000,20 +2032,13 @@ class VEY:
         while i < len(line):
             char = line[i]
     
-            # Enter quoted section
-            if char in in_char1 and not inside_char:
-                inside_char = char
-                i += 1
-                continue
-    
-            # Exit quoted section
-            elif char in in_char2 and inside_char:
-                inside_char = False
+            # quotes / brackets (nesting aware, a quote only closes the same quote)
+            if self._step_encloser(char, stack, in_char1, in_char2):
                 i += 1
                 continue
     
             # Only check tokens that could possibly start with this character
-            if not inside_char and char in target_lookup:
+            if not stack and char in target_lookup:
                 for t in target_lookup[char]:
                     if line[i:i+len(t)] == t:
                         return True
@@ -2694,7 +2719,6 @@ class VEY:
             v = []
             for var in arg:
                 value = self.eval(var, {}, self.variables)
-                print(value)
                 if not self.return_type:
                     v.append(value)
                     continue
@@ -3892,7 +3916,7 @@ class VEY:
         ismethod = self.special_find(right, ".", ('"', "'", "(", "[", "{"), ('"', "'", ")", "]", "}"))
         pattern = r'(?<!\w)[+-]?(?:\d+\.\d+|\d+\.|\.\d+)(?!\w)'
         if not right.startswith("call") and not bool(re.search(pattern, right)) and not self._is_bare_call(right):
-            main = self.special_split(right, ".", ("'", '"', "("), ("'", '"', ")"))
+            main = self.special_split(right, ".", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"))
         else: main = right.strip()
         if isinstance(main, list):
             main = main[0].strip()
@@ -4392,6 +4416,48 @@ class VEY:
                     else:
                         self.variables[left] = isinstance(value, datatype)
                     return
+                
+                elif main.startswith("open("):
+                    arg = self.special_split(main[5:-1].strip(), ",", ("'", '"', "(", "[", "{"), ("'", '"', ")", "]", "}"), limit=3)
+                    if len(arg) > 3:
+                        self.error(132, len(arg))
+                        return
+                    elif len(arg) < 2:
+                        self.error(133, len(arg))
+                        return
+                    encoding = None
+                    if len(arg) == 3:
+                        encoding = arg[2]
+                    file = self.eval(arg[0].strip(), {}, self.variables)
+                    modes = ["r", "w", "x", "a", "t", "b"]
+                    mode = self.eval(arg[1].strip(), {}, self.variables)
+                    if mode not in modes:
+                        self.error(134, mode)
+                        return
+                    try:
+                        if encoding is not None:
+                            value = open(file, mode, encoding=encoding)
+                        else:
+                            value = open(file, mode)
+                    except Exception as e:
+                        if isinstance(e, FileExistsError):
+                            self.error(100, file)
+                        elif isinstance(e, FileNotFoundError):
+                            self.error(73, file)
+                        elif isinstance(e, IsADirectoryError):
+                            self.error(135, file)
+                        elif isinstance(e, NotADirectoryError):
+                            self.error(136, file)
+                        elif isinstance(e, PermissionError):
+                            self.error(137, file)
+                        elif isinstance(e, OSError):
+                            self.error(138, file)
+                        return
+                    self.variables[left] = value
+                    return
+                    
+                
+                
                     
                 elif main in self.functions.keys():
                     arg = self.functions[main.strip()]
@@ -4454,8 +4520,8 @@ class VEY:
                             item_now += str(i)
                         self.variables[left] = self.eval(item_now, {}, self.variables)
                     return
-                elif self.library and "." in right:
-                    # checks if it's floating point number
+                elif self.library and ismethod:
+                    # checks if it's floating point number (ismethod ignores dots inside strings/brackets)
                     flt_check = right.split(".", 1)
                     d1 = flt_check[0]
                     d2 = flt_check[1]
@@ -5321,7 +5387,12 @@ Veyl is still under development.
             """)
             topic = input("help >>> ")
         
-        topics
+        topics = ["keyword", "functions", "methods", "sse", "modules", "symbols"]
+        functions = self.bif
+        methods = self.bim
+        keywords = ["if", "while", "else", "for", "break", "continue", "pass", "public", "private", "func", "import", "try", "catch", "throw", "return", "open", "static",
+            "sync", "desync", "delete", "new", "const", "load", "inherit", "global", "match", "case", "fallthrough", "call"]
+        modules = self.libraries
         
     
     def process_sse(self, code, types="syntax"):
