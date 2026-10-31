@@ -19,22 +19,22 @@ if "VeylPL" not in system.path:
         from built_in_libraries import libraries
     except ImportError as e:
         pass
-    try:
-        from error import handle
-    except ImportError as e:
-        pass
-    try:
-        import syntax_encloser
-    except ImportError as e:
-        pass
-    try:
-        import resolve_external
-    except ImportError as e:
-        pass
-    try:
-        import veylIO
-    except Exception as e:
-        pass
+try:
+    from error import handle
+except ImportError as e:
+    pass
+try:
+    import syntax_encloser
+except ImportError as e:
+    pass
+try:
+    import resolve_external
+except ImportError as e:
+    pass
+try:
+    import veylIO
+except Exception as e:
+    pass
 import veylIO
 
 _ASSIGN_FASTPATH_EXCLUDE = (
@@ -533,6 +533,11 @@ class VEY:
         self.adv_debug_wait = 0
         
         # IMPORTANTS
+        if isinstance(instructions, (list, tuple)):
+            new_inst = ""
+            for c in instructions:
+                new_inst += c + "\n"
+            instructions = new_inst
         self.Instructions = self.build_instructions(instructions) # main instruction line gets split line by line
         self.full_instructions = self.Instructions # Original constant instructions of self.Instructions
         self.raw_instructions = instructions # Untouched raw instruction line
@@ -1778,16 +1783,31 @@ class VEY:
                 if expr == "<any>":
                     boolean = True
                 else:
-                    expression = self.expression(expr)
-                    variables.update(expression["variables"])
-                    constants.update(expression["const"])
-                    expr_text += f'({str(expression["expr"])}) '
-                    if isfalse:
-                        continue
-                    if expression["iseval"]: # instant evaluation, use eval() since there is no more arb code
-                        boolean = self._eval_expr_result(expression, {}, self.variables)
-                    else:
-                        boolean = self.eval(expression["expr"], {}, self.variables, from_exp=True)
+                    try:
+                        expression = self.expression(expr)
+                        variables.update(expression["variables"])
+                        constants.update(expression["const"])
+                        expr_text += f'({str(expression["expr"])}) '
+                        if isfalse:
+                            continue
+                        if expression["iseval"]: # instant evaluation, use eval() since there is no more arb code
+                            boolean = self._eval_expr_result(expression, {}, self.variables)
+                        else:
+                            boolean = self.eval(expression["expr"], {}, self.variables, from_exp=True)
+                    except Exception as e:
+                        # If this error handler get commented out, it is a mistake, as it is for debugging purposes
+                        if isinstance(e, ZeroDivisionError):
+                            self.error(4)
+                            return None
+                        if isinstance(e, MemoryError):
+                            self.error(7)
+                            return
+                        if isinstance(e, NameError):
+                            self.error(18, main)
+                            return
+                        self.error(6, right)
+                        print(e)
+                        return None
                     if not isinstance(boolean, bool):
                         self.error(11, boolean)
                         return False
@@ -3938,7 +3958,7 @@ class VEY:
         for n in name_test:
             if n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal and not fromsystem:
                 self.error(115, n)
-            elif any(fc in n for fc in self.forbiden_chars + extra_forbids) and not fromsystem:
+            elif any(fc in n for fc in self.forbiden_chars + extra_forbids) and not fromsystem and n.strip().startswith(("$<<", "<<")) and (">>" in n or n.strip().endswith(">>")) and not isexternal:
                 self.error(116)
         
         if not isinstance(left, list):
